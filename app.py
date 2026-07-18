@@ -11,7 +11,8 @@ import streamlit as st
 
 from config.watchlist import WATCHLIST
 from data.fetch import fetch_history, get_current_price
-from data.indicators import add_moving_averages, MA_WINDOWS
+from data.indicators import add_bollinger_bands, add_moving_averages, front_high_signal, MA_WINDOWS
+from data.overnight import get_overnight_sentiment
 
 ACCENT = "#e8935a"
 BG = "#0d0d0d"
@@ -43,6 +44,37 @@ def load_history(symbol: str):
     return fetch_history(symbol)
 
 
+@st.cache_data(ttl=1800)
+def load_overnight_sentiment():
+    return get_overnight_sentiment()
+
+
+SENTIMENT_COLOR = {
+    "大漲": "#ef5350", "小漲": "#e8935a", "持平": TEXT_MUTED, "小跌": "#6fbf73", "大跌": "#4caf50",
+}
+
+try:
+    overnight = load_overnight_sentiment()
+    sc = SENTIMENT_COLOR.get(overnight["sentiment"], TEXT_MUTED)
+    st.markdown(
+        f"""
+        <div style="background:{CARD_BG}; border:1px solid {GRID}; border-radius:8px;
+                    padding:10px 16px; margin-bottom:16px; display:flex; gap:16px; align-items:baseline;">
+          <span style="color:{TEXT_MUTED}; font-size:13px;">台指夜盤（{overnight['date']}，{overnight['expiry']}近月）</span>
+          <span style="font-size:16px;">{overnight['close']:,.0f}</span>
+          <span style="color:{sc}; font-size:14px;">{overnight['change']} ({overnight['change_pct']:+.2f}%)</span>
+          <span style="color:{sc}; font-size:14px;">{overnight['sentiment']}</span>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+except Exception as e:
+    st.markdown(
+        f"<div style='color:{TEXT_MUTED}; font-size:13px; margin-bottom:16px;'>台指夜盤資料暫時抓不到（{e}）</div>",
+        unsafe_allow_html=True,
+    )
+
+
 # MA 線刻意避開紅/綠（留給K線漲跌用），深色底上要夠亮才看得清楚
 MA_COLORS = {5: "#5b9bd5", 10: "#a89ef0", 20: "#f0b429", 60: "#c4c1b8"}
 
@@ -58,21 +90,47 @@ for item in WATCHLIST:
     df = load_history(symbol)
     price = get_current_price(symbol, df)
     df = add_moving_averages(df, MA_WINDOWS)  # 用全部歷史算，均線在顯示範圍起點才不會不準
+    df = add_bollinger_bands(df)
     latest = df.iloc[-1]
     n = RANGE_OPTIONS[selected_range]
     display_df = df if n is None else df.tail(n)
+    signal = front_high_signal(df, price)
+
+    # 判斷「前一收盤」：如果目前價格已經跟歷史最後一筆一樣（代表當下沒有更新的即時價，
+    # 例如休市中），前一收盤要往前抓一天，不然漲跌會算成 0
+    if abs(price - float(df["Close"].iloc[-1])) < 0.01:
+        prev_close = float(df["Close"].iloc[-2])
+    else:
+        prev_close = float(df["Close"].iloc[-1])
+    change = price - prev_close
+    change_pct = change / prev_close * 100 if prev_close else 0.0
+    up = change >= 0
+    change_color = "#ef5350" if up else "#4caf50"  # 台股慣例：紅漲綠跌
+    arrow = "▲" if up else "▼"
 
     with st.container(border=True):
-        col1, col2 = st.columns([3, 1])
-        with col1:
+        st.markdown(
+            f"<span style='color:{TEXT_MUTED}; font-size:15px;'>{name}</span> "
+            f"<span style='color:{TEXT_MUTED}; font-size:13px;'>{symbol}</span>",
+            unsafe_allow_html=True,
+        )
+        st.markdown(
+            f"""
+            <div style="display:flex; align-items:baseline; gap:12px; margin:4px 0 8px;">
+              <span style="font-size:36px; font-weight:500;">{price:,.2f}</span>
+              <span style="color:{change_color}; font-size:18px;">
+                {arrow} {abs(change):,.2f} ({abs(change_pct):.2f}%)
+              </span>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+
+        if signal:
             st.markdown(
-                f"<span style='color:{ACCENT}; font-size:16px;'>{name}</span> "
-                f"<span style='color:{TEXT_MUTED}; font-size:13px;'>{symbol}</span>",
-                unsafe_allow_html=True,
-            )
-        with col2:
-            st.markdown(
-                f"<div style='text-align:right; font-size:20px;'>{price:.2f}</div>",
+                f"<div style='background:{ACCENT}22; color:{ACCENT}; border-radius:6px; "
+                f"padding:6px 12px; font-size:13px; display:inline-block; margin-bottom:8px;'>"
+                f"{signal['message']}</div>",
                 unsafe_allow_html=True,
             )
 
@@ -94,6 +152,20 @@ for item in WATCHLIST:
                 increasing_fillcolor="#ef5350",
                 decreasing_line_color="#4caf50",
                 decreasing_fillcolor="#4caf50",
+            )
+        )
+        # 布林通道：先畫下軌（不填色）、再畫上軌並往下填色到下軌，形成一個帶狀區間
+        fig.add_trace(
+            go.Scatter(
+                x=dates_str, y=display_df["BB_lower"], name="布林下軌",
+                line=dict(color="#5f5e5a", width=1, dash="dot"), showlegend=False,
+            )
+        )
+        fig.add_trace(
+            go.Scatter(
+                x=dates_str, y=display_df["BB_upper"], name="布林通道",
+                line=dict(color="#5f5e5a", width=1, dash="dot"),
+                fill="tonexty", fillcolor="rgba(95,94,90,0.12)",
             )
         )
         for w in MA_WINDOWS:
