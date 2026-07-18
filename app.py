@@ -20,7 +20,7 @@ from config.watchlist import WATCHLIST
 from data.fetch import fetch_history, get_current_price
 from data.indicators import add_bollinger_bands, add_moving_averages, front_high_signal, MA_WINDOWS
 from data.macro import fetch_foreign_futures_position, fetch_sox, fetch_twd_usd, value_and_change
-from data.overnight import fetch_overnight_trend, get_overnight_sentiment
+from data.overnight import fetch_overnight_trend
 
 ACCENT = "#e8935a"
 BG = "#0d0d0d"
@@ -52,43 +52,44 @@ def load_history(symbol: str):
     return fetch_history(symbol)
 
 
-@st.cache_data(ttl=1800)
-def load_overnight_sentiment():
-    return get_overnight_sentiment()
-
-
 @st.cache_data(ttl=21600)  # 6小時：這幾個都要逐日查詢很慢，拉長快取效期
 def load_macro_series(kind: str):
     if kind == "overnight":
         return fetch_overnight_trend(lookback_trading_days=20)
     if kind == "twd":
-        return fetch_twd_usd(period="3mo")
+        return fetch_twd_usd(period="1mo")
     if kind == "sox":
-        return fetch_sox(period="3mo")
+        return fetch_sox(period="1mo")
     if kind == "foreign_futures":
         return fetch_foreign_futures_position(lookback_trading_days=20)
     raise ValueError(kind)
 
 
+def day_over_day_change(df: pd.DataFrame) -> dict:
+    """跟前一筆比（不是跟整段區間第一筆比）。夜盤用這個比較合理——
+    要看的是「昨晚 vs 前一晚」的動能，不是跟一個月前比。"""
+    current = float(df["Close"].iloc[-1])
+    prev = float(df["Close"].iloc[-2])
+    change_pct = (current - prev) / prev * 100 if prev else 0.0
+    return {"current": current, "change_pct": change_pct}
+
+
 def render_sparkline(df, up: bool):
-    """小折線圖：緊貼資料範圍的 y 軸（不然像匯率這種變動幅度小的會被壓平看不出趨勢），
-    x 軸留幾個日期刻度當參考，不要完全隱藏座標。"""
-    line_color = "#ef5350" if up else "#4caf50"  # 台股慣例：紅漲綠跌，跟主圖一致
+    """直條圖：一天一根柱子，柱子頂端的連線就能看出趨勢，也能個別看到每日數值。
+    y 軸緊貼資料範圍（不然像匯率這種變動幅度小的會被壓平看不出變化），
+    x 軸留頭尾日期刻度當參考。"""
+    bar_color = "#ef5350" if up else "#4caf50"  # 台股慣例：紅漲綠跌，跟主圖一致
     values = df["Close"]
     pad = (values.max() - values.min()) * 0.15 or values.max() * 0.01
     dates_str = df.index.strftime("%m/%d") if hasattr(df.index, "strftime") else [str(i) for i in df.index]
 
     fig = go.Figure()
-    fig.add_trace(
-        go.Scatter(
-            x=list(range(len(df))), y=values, mode="lines",
-            line=dict(color=line_color, width=1.5),
-        )
-    )
+    fig.add_trace(go.Bar(x=list(range(len(df))), y=values, marker_color=bar_color))
     fig.update_layout(
         height=70,
         margin=dict(l=0, r=0, t=4, b=4),
         showlegend=False,
+        bargap=0.25,
         plot_bgcolor=CARD_BG,
         paper_bgcolor=CARD_BG,
         yaxis=dict(
@@ -111,12 +112,14 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
+# change_mode: "day_over_day"（跟前一筆比，夜盤用）／"period"（跟區間第一筆比）／None（不顯示%，外資空單用，
+# 因為數值本身是負的，「淨空單越多」是往更負的方向走，%變化不直觀甚至會誤導）
 ALERT_INDICATORS = [
-    {"key": "overnight", "label": "台指夜盤（近1個月）", "fmt": ",.0f", "note": None},
-    {"key": "twd", "label": "台幣兌美元（近3個月）", "fmt": ".3f", "note": None},
-    {"key": "sox", "label": "費城半導體指數（近3個月）", "fmt": ",.0f", "note": None},
-    {"key": "foreign_futures", "label": "外資台指期未平倉淨額（近1個月）", "fmt": ",.0f",
-     "note": "外資台指期貨(TXF)多空未平倉淨額口數，資料源 TAIFEX，負值代表淨空單"},
+    {"key": "overnight", "label": "台指夜盤（近1個月）", "fmt": ",.0f", "change_mode": "day_over_day", "note": None},
+    {"key": "twd", "label": "台幣兌美元（近1個月）", "fmt": ".3f", "change_mode": "period", "note": None},
+    {"key": "sox", "label": "費城半導體指數（近1個月）", "fmt": ",.0f", "change_mode": "period", "note": None},
+    {"key": "foreign_futures", "label": "外資台指期未平倉淨額（近1個月）", "fmt": ",.0f", "change_mode": None,
+     "note": "外資台指期貨(TXF)多空未平倉淨額口數，資料源 TAIFEX，負值代表淨空單，越負代表空單越多"},
 ]
 
 alert_cols = st.columns(4)
@@ -125,14 +128,27 @@ for col, spec in zip(alert_cols, ALERT_INDICATORS):
         with st.container(border=True):
             try:
                 series = load_macro_series(spec["key"])
-                vc = value_and_change(series)
-                up = vc["change_pct"] >= 0
-                c = "#ef5350" if up else "#4caf50"
+                current = float(series["Close"].iloc[-1])
+                change_html = ""
+                up = True
+                if spec["change_mode"] == "day_over_day":
+                    vc = day_over_day_change(series)
+                    up = vc["change_pct"] >= 0
+                    c = "#ef5350" if up else "#4caf50"
+                    change_html = f"<div style='color:{c}; font-size:13px;'>{vc['change_pct']:+.2f}%</div>"
+                elif spec["change_mode"] == "period":
+                    vc = value_and_change(series)
+                    up = vc["change_pct"] >= 0
+                    c = "#ef5350" if up else "#4caf50"
+                    change_html = f"<div style='color:{c}; font-size:13px;'>{vc['change_pct']:+.2f}%</div>"
+                else:
+                    up = current >= float(series["Close"].iloc[0])  # 沒有%時，柱子顏色跟著整段趨勢方向走
+
                 st.markdown(
                     f"""
                     <div style="color:{TEXT_MUTED}; font-size:12px;">{spec['label']}</div>
-                    <div style="font-size:24px; margin:2px 0;">{vc['current']:{spec['fmt']}}</div>
-                    <div style="color:{c}; font-size:13px;">{vc['change_pct']:+.2f}%</div>
+                    <div style="font-size:24px; margin:2px 0;">{current:{spec['fmt']}}</div>
+                    {change_html}
                     """,
                     unsafe_allow_html=True,
                 )
