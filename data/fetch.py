@@ -1,19 +1,44 @@
-"""股價歷史資料抓取（yfinance）。
+"""股價歷史資料抓取。
 
-已知限制：yfinance 對台股的報價通常有 15-20 分鐘延遲，不是逐秒即時。
-這是為了快速做出 v1 的折衷，之後有需要再換成 TWSE MIS 即時行情 API。
+原本用 yfinance，但發現對台股「上櫃」股票（例如環球晶 6488）的歷史收盤價
+在 20-60 天這個範圍內跟 Fubon/Yahoo奇摩股市 兩個獨立來源對不起來（差距約 0.5-1%），
+換成 FinMind（台灣在地的開源金融資料 API，上市櫃資料都涵蓋，經驗證跟權威來源完全吻合）。
 """
+from datetime import date, timedelta
+
 import pandas as pd
-import yfinance as yf
+from FinMind.data import DataLoader
+
+_loader = DataLoader()
 
 
-def fetch_history(symbol: str, period: str = "1y") -> pd.DataFrame:
-    """抓單一標的的歷史 OHLC。period 例如 '1y'、'6mo'、'3mo'。"""
-    ticker = yf.Ticker(symbol)
-    df = ticker.history(period=period)
-    if df.empty:
-        raise RuntimeError(f"抓不到 {symbol} 的歷史資料")
-    return df
+def symbol_to_finmind_id(symbol: str) -> str:
+    """把 yfinance 風格代號轉成 FinMind 的 stock_id。"""
+    if symbol == "^TWII":
+        return "TAIEX"
+    if symbol.endswith(".TWO"):
+        return symbol[: -len(".TWO")]
+    if symbol.endswith(".TW"):
+        return symbol[: -len(".TW")]
+    raise ValueError(f"不認得的代號格式: {symbol}")
+
+
+def fetch_history(symbol: str, lookback_days: int = 400) -> pd.DataFrame:
+    """抓單一標的的歷史 OHLC（原始成交價）。lookback_days 抓夠均線/前高偵測要用的天數。"""
+    stock_id = symbol_to_finmind_id(symbol)
+    start = (date.today() - timedelta(days=lookback_days)).isoformat()
+    end = date.today().isoformat()
+
+    raw = _loader.taiwan_stock_daily(stock_id=stock_id, start_date=start, end_date=end)
+    if raw.empty:
+        raise RuntimeError(f"抓不到 {symbol}（FinMind stock_id={stock_id}）的歷史資料")
+
+    df = raw.rename(
+        columns={"open": "Open", "max": "High", "min": "Low", "close": "Close", "Trading_Volume": "Volume"}
+    )
+    df["Date"] = pd.to_datetime(df["date"])
+    df = df.set_index("Date").sort_index()
+    return df[["Open", "High", "Low", "Close", "Volume"]]
 
 
 def latest_price(df: pd.DataFrame) -> float:
@@ -39,6 +64,6 @@ if __name__ == "__main__":
 
     for item in WATCHLIST:
         symbol, name = item["symbol"], item["name"]
-        df = fetch_history(symbol, period="3mo")
+        df = fetch_history(symbol)
         price = get_current_price(symbol, df)
         print(f"{name}（{symbol}）目前價格: {price}")
