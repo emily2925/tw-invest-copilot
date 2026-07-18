@@ -1,0 +1,7 @@
+yfinance==0.2.54
+pandas
+streamlit
+plotly
+requests
+python-dotenv
+openai-agents[litellm]
