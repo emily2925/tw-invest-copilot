@@ -102,6 +102,35 @@ def get_overnight_sentiment() -> dict:
     return data
 
 
+def fetch_overnight_trend(lookback_trading_days: int = 20):
+    """近 lookback_trading_days 個交易日的夜盤收盤價序列，給趨勢圖用。
+
+    TAIFEX 這份資料一天一次查詢，沒有區間查詢功能，逐日往回查。
+    """
+    import pandas as pd
+
+    records = []
+    d = next_trading_day(date.today())
+    attempts = 0
+    max_attempts = lookback_trading_days * 2 + 15
+
+    while len(records) < lookback_trading_days and attempts < max_attempts:
+        attempts += 1
+        if d.weekday() < 5:
+            try:
+                data = fetch_tx_night_session(d)
+                records.append((d, data["close"]))
+            except Exception:
+                pass
+        d -= timedelta(days=1)
+
+    if not records:
+        raise RuntimeError("抓不到夜盤歷史資料")
+
+    records.reverse()
+    return pd.DataFrame(records, columns=["date", "Close"]).set_index("date")
+
+
 if __name__ == "__main__":
     result = get_overnight_sentiment()
     print("=== 台指期夜盤（近月合約）===")

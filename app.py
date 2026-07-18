@@ -19,8 +19,8 @@ import streamlit as st
 from config.watchlist import WATCHLIST
 from data.fetch import fetch_history, get_current_price
 from data.indicators import add_bollinger_bands, add_moving_averages, front_high_signal, MA_WINDOWS
-from data.macro import fetch_foreign_short_trend, fetch_sox, fetch_twd_usd, value_and_change
-from data.overnight import get_overnight_sentiment
+from data.macro import fetch_foreign_futures_position, fetch_sox, fetch_twd_usd, value_and_change
+from data.overnight import fetch_overnight_trend, get_overnight_sentiment
 
 ACCENT = "#e8935a"
 BG = "#0d0d0d"
@@ -57,36 +57,51 @@ def load_overnight_sentiment():
     return get_overnight_sentiment()
 
 
-@st.cache_data(ttl=1800)
-def load_macro_series(kind: str, lookback_days: int):
+@st.cache_data(ttl=21600)  # 6小時：這幾個都要逐日查詢很慢，拉長快取效期
+def load_macro_series(kind: str):
+    if kind == "overnight":
+        return fetch_overnight_trend(lookback_trading_days=20)
     if kind == "twd":
         return fetch_twd_usd(period="3mo")
     if kind == "sox":
         return fetch_sox(period="3mo")
-    if kind == "short":
-        return fetch_foreign_short_trend(lookback_days=lookback_days)
+    if kind == "foreign_futures":
+        return fetch_foreign_futures_position(lookback_trading_days=20)
     raise ValueError(kind)
 
 
 def render_sparkline(df, up: bool):
-    """小折線圖：不要座標軸/格線/圖例，只給一條乾淨的趨勢線。"""
-    # 台股慣例：紅漲綠跌，跟主圖一致
-    line_color, fill_color = ("#ef5350", "rgba(239,83,80,0.08)") if up else ("#4caf50", "rgba(76,175,80,0.08)")
+    """小折線圖：緊貼資料範圍的 y 軸（不然像匯率這種變動幅度小的會被壓平看不出趨勢），
+    x 軸留幾個日期刻度當參考，不要完全隱藏座標。"""
+    line_color = "#ef5350" if up else "#4caf50"  # 台股慣例：紅漲綠跌，跟主圖一致
+    values = df["Close"]
+    pad = (values.max() - values.min()) * 0.15 or values.max() * 0.01
+    dates_str = df.index.strftime("%m/%d") if hasattr(df.index, "strftime") else [str(i) for i in df.index]
+
     fig = go.Figure()
     fig.add_trace(
         go.Scatter(
-            x=list(range(len(df))), y=df["Close"], mode="lines",
-            line=dict(color=line_color, width=1.5), fill="tozeroy", fillcolor=fill_color,
+            x=list(range(len(df))), y=values, mode="lines",
+            line=dict(color=line_color, width=1.5),
         )
     )
     fig.update_layout(
-        height=60,
-        margin=dict(l=0, r=0, t=0, b=0),
+        height=70,
+        margin=dict(l=0, r=0, t=4, b=4),
         showlegend=False,
         plot_bgcolor=CARD_BG,
         paper_bgcolor=CARD_BG,
-        xaxis=dict(visible=False),
-        yaxis=dict(visible=False),
+        yaxis=dict(
+            visible=False,
+            range=[values.min() - pad, values.max() + pad],
+        ),
+        xaxis=dict(
+            tickmode="array",
+            tickvals=[0, len(df) - 1],
+            ticktext=[dates_str[0], dates_str[-1]],
+            tickfont=dict(color=TEXT_MUTED, size=10),
+            showgrid=False,
+        ),
     )
     return fig
 
@@ -96,89 +111,42 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
+ALERT_INDICATORS = [
+    {"key": "overnight", "label": "台指夜盤（近1個月）", "fmt": ",.0f", "note": None},
+    {"key": "twd", "label": "台幣兌美元（近3個月）", "fmt": ".3f", "note": None},
+    {"key": "sox", "label": "費城半導體指數（近3個月）", "fmt": ",.0f", "note": None},
+    {"key": "foreign_futures", "label": "外資台指期未平倉淨額（近1個月）", "fmt": ",.0f",
+     "note": "外資台指期貨(TXF)多空未平倉淨額口數，資料源 TAIFEX，負值代表淨空單"},
+]
+
 alert_cols = st.columns(4)
-
-# 台指夜盤：只看最近一次（昨夜），不用畫趨勢圖
-with alert_cols[0]:
-    with st.container(border=True):
-        try:
-            overnight = load_overnight_sentiment()
-            up = overnight["change_pct"] >= 0
-            c = "#ef5350" if up else "#4caf50"
-            st.markdown(
-                f"""
-                <div style="color:{TEXT_MUTED}; font-size:12px;">台指夜盤（昨夜）</div>
-                <div style="font-size:24px; margin:2px 0;">{overnight['close']:,.0f}</div>
-                <div style="color:{c}; font-size:13px;">{overnight['change']} ({overnight['change_pct']:+.2f}%) · {overnight['sentiment']}</div>
-                """,
-                unsafe_allow_html=True,
-            )
-        except Exception as e:
-            st.markdown(f"<div style='color:{TEXT_MUTED}; font-size:12px;'>台指夜盤：暫時抓不到（{e}）</div>", unsafe_allow_html=True)
-
-# 台幣兌美元匯率：近3個月
-with alert_cols[1]:
-    with st.container(border=True):
-        try:
-            twd = load_macro_series("twd", 0)
-            vc = value_and_change(twd)
-            up = vc["change_pct"] >= 0
-            c = "#ef5350" if up else "#4caf50"
-            st.markdown(
-                f"""
-                <div style="color:{TEXT_MUTED}; font-size:12px;">台幣兌美元（近3個月）</div>
-                <div style="font-size:24px; margin:2px 0;">{vc['current']:.3f}</div>
-                <div style="color:{c}; font-size:13px;">{vc['change_pct']:+.2f}%</div>
-                """,
-                unsafe_allow_html=True,
-            )
-            st.plotly_chart(render_sparkline(twd, up), width="stretch", config={"displayModeBar": False})
-        except Exception as e:
-            st.markdown(f"<div style='color:{TEXT_MUTED}; font-size:12px;'>台幣匯率：暫時抓不到（{e}）</div>", unsafe_allow_html=True)
-
-# 費城半導體指數：近3個月
-with alert_cols[2]:
-    with st.container(border=True):
-        try:
-            sox = load_macro_series("sox", 0)
-            vc = value_and_change(sox)
-            up = vc["change_pct"] >= 0
-            c = "#ef5350" if up else "#4caf50"
-            st.markdown(
-                f"""
-                <div style="color:{TEXT_MUTED}; font-size:12px;">費城半導體指數（近3個月）</div>
-                <div style="font-size:24px; margin:2px 0;">{vc['current']:,.0f}</div>
-                <div style="color:{c}; font-size:13px;">{vc['change_pct']:+.2f}%</div>
-                """,
-                unsafe_allow_html=True,
-            )
-            st.plotly_chart(render_sparkline(sox, up), width="stretch", config={"displayModeBar": False})
-        except Exception as e:
-            st.markdown(f"<div style='color:{TEXT_MUTED}; font-size:12px;'>費半：暫時抓不到（{e}）</div>", unsafe_allow_html=True)
-
-# 外資空單趨勢（整體市場融券餘額代理）：近1個月
-with alert_cols[3]:
-    with st.container(border=True):
-        try:
-            short = load_macro_series("short", 30)
-            vc = value_and_change(short)
-            up = vc["change_pct"] >= 0
-            c = "#ef5350" if up else "#4caf50"
-            st.markdown(
-                f"""
-                <div style="color:{TEXT_MUTED}; font-size:12px;">外資空單趨勢＊（近1個月）</div>
-                <div style="font-size:24px; margin:2px 0;">{vc['current']:,.0f}</div>
-                <div style="color:{c}; font-size:13px;">{vc['change_pct']:+.2f}%</div>
-                """,
-                unsafe_allow_html=True,
-            )
-            st.plotly_chart(render_sparkline(short, up), width="stretch", config={"displayModeBar": False})
-            st.markdown(
-                f"<div style='color:{TEXT_MUTED}; font-size:10px;'>＊整體市場融券餘額代理，非外資專屬空單</div>",
-                unsafe_allow_html=True,
-            )
-        except Exception as e:
-            st.markdown(f"<div style='color:{TEXT_MUTED}; font-size:12px;'>外資空單：暫時抓不到（{e}）</div>", unsafe_allow_html=True)
+for col, spec in zip(alert_cols, ALERT_INDICATORS):
+    with col:
+        with st.container(border=True):
+            try:
+                series = load_macro_series(spec["key"])
+                vc = value_and_change(series)
+                up = vc["change_pct"] >= 0
+                c = "#ef5350" if up else "#4caf50"
+                st.markdown(
+                    f"""
+                    <div style="color:{TEXT_MUTED}; font-size:12px;">{spec['label']}</div>
+                    <div style="font-size:24px; margin:2px 0;">{vc['current']:{spec['fmt']}}</div>
+                    <div style="color:{c}; font-size:13px;">{vc['change_pct']:+.2f}%</div>
+                    """,
+                    unsafe_allow_html=True,
+                )
+                st.plotly_chart(render_sparkline(series, up), width="stretch", config={"displayModeBar": False})
+                if spec["note"]:
+                    st.markdown(
+                        f"<div style='color:{TEXT_MUTED}; font-size:10px;'>{spec['note']}</div>",
+                        unsafe_allow_html=True,
+                    )
+            except Exception as e:
+                st.markdown(
+                    f"<div style='color:{TEXT_MUTED}; font-size:12px;'>{spec['label']}：暫時抓不到（{e}）</div>",
+                    unsafe_allow_html=True,
+                )
 
 
 # MA 線刻意避開紅/綠（留給K線漲跌用），深色底上要夠亮才看得清楚
