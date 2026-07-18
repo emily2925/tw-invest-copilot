@@ -17,8 +17,21 @@ def fetch_history(symbol: str, period: str = "1y") -> pd.DataFrame:
 
 
 def latest_price(df: pd.DataFrame) -> float:
-    """從歷史資料取最新一筆收盤價，當作目前價格的近似值。"""
+    """從歷史資料取最新一筆收盤價，當作目前價格的近似值（fallback 用）。"""
     return float(df["Close"].iloc[-1])
+
+
+def get_current_price(symbol: str, df: pd.DataFrame) -> float:
+    """目前價格：優先用 TWSE MIS 準即時報價，查不到才 fallback 回歷史收盤價。"""
+    from data.live_price import fetch_live_prices
+
+    try:
+        live = fetch_live_prices([symbol]).get(symbol)
+        if live is not None:
+            return live
+    except Exception:
+        pass
+    return latest_price(df)
 
 
 if __name__ == "__main__":
@@ -27,5 +40,5 @@ if __name__ == "__main__":
     for item in WATCHLIST:
         symbol, name = item["symbol"], item["name"]
         df = fetch_history(symbol, period="3mo")
-        price = latest_price(df)
+        price = get_current_price(symbol, df)
         print(f"{name}（{symbol}）目前價格: {price}")

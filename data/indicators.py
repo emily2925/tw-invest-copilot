@@ -21,12 +21,12 @@ def latest_ma_values(df: pd.DataFrame, windows: list[int] = MA_WINDOWS) -> dict:
 
 if __name__ == "__main__":
     from config.watchlist import WATCHLIST
-    from data.fetch import fetch_history, latest_price
+    from data.fetch import fetch_history, get_current_price
 
     for item in WATCHLIST:
         symbol, name = item["symbol"], item["name"]
         df = fetch_history(symbol, period="6mo")
-        price = latest_price(df)
+        price = get_current_price(symbol, df)
         mas = latest_ma_values(df)
         ma_str = "  ".join(f"{k}={v:.2f}" if v is not None else f"{k}=N/A" for k, v in mas.items())
         print(f"{name}（{symbol}）現價 {price:.2f}｜{ma_str}")
