@@ -3,7 +3,14 @@
 Hour 5：只顯示追蹤清單的走勢圖 + 均線疊圖，警示/agent 在後面的 checkpoint 才加。
 風格參考使用者提供的深色終端機風 dashboard：深色底、等寬字、橘色重點色、卡片分區。
 """
+import os
+import sys
 from datetime import datetime
+
+# 保險起見明確把專案根目錄加進 sys.path——不加的話，Streamlit 重新執行腳本時
+# 有時候找不到同層的 config/、data/ 這些本地 package（曾經在瀏覽器實測時遇到
+# ModuleNotFoundError: No module named 'data.fetch'，本機單獨跑 python3 -m 不會重現）
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import pandas as pd
 import plotly.graph_objects as go
@@ -194,4 +201,4 @@ for item in WATCHLIST:
             xaxis=dict(type="category", showgrid=False, color=TEXT_MUTED, nticks=8),
             yaxis=dict(gridcolor=GRID, color=TEXT_MUTED),
         )
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, width="stretch")
