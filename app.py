@@ -89,10 +89,16 @@ def render_sparkline(df, up: bool):
     bar_color = "#ef5350" if up else "#4caf50"  # 台股慣例：紅漲綠跌，跟主圖一致
     values = df["Close"]
     pad = (values.max() - values.min()) * 0.15 or values.max() * 0.01
-    dates_str = df.index.strftime("%m/%d") if hasattr(df.index, "strftime") else [str(i) for i in df.index]
+    dates_str = df.index.strftime("%Y/%m/%d") if hasattr(df.index, "strftime") else [str(i) for i in df.index]
+    tick_dates_str = df.index.strftime("%m/%d") if hasattr(df.index, "strftime") else dates_str
 
     fig = go.Figure()
-    fig.add_trace(go.Bar(x=list(range(len(df))), y=values, marker_color=bar_color))
+    fig.add_trace(
+        go.Bar(
+            x=list(range(len(df))), y=values, marker_color=bar_color,
+            text=dates_str, hovertemplate="%{text}<br>%{y:,.2f}<extra></extra>",
+        )
+    )
     fig.update_layout(
         height=70,
         margin=dict(l=0, r=0, t=4, b=4),
@@ -107,7 +113,7 @@ def render_sparkline(df, up: bool):
         xaxis=dict(
             tickmode="array",
             tickvals=[0, len(df) - 1],
-            ticktext=[dates_str[0], dates_str[-1]],
+            ticktext=[tick_dates_str[0], tick_dates_str[-1]],
             tickfont=dict(color=TEXT_MUTED, size=10),
             showgrid=False,
         ),
@@ -122,8 +128,15 @@ def render_intraday_line(df):
     line_color = "#ef5350" if up else "#4caf50"
     pad = (values.max() - values.min()) * 0.15 or values.max() * 0.01
 
+    time_labels = [f"{t[:2]}:{t[2:]}" for t in df["Time"]]
+
     fig = go.Figure()
-    fig.add_trace(go.Scatter(x=list(range(len(df))), y=values, mode="lines", line=dict(color=line_color, width=1.5)))
+    fig.add_trace(
+        go.Scatter(
+            x=list(range(len(df))), y=values, mode="lines", line=dict(color=line_color, width=1.5),
+            text=time_labels, hovertemplate="%{text}<br>%{y:,.0f}<extra></extra>",
+        )
+    )
     fig.update_layout(
         height=70,
         margin=dict(l=0, r=0, t=4, b=4),
@@ -134,7 +147,7 @@ def render_intraday_line(df):
         xaxis=dict(
             tickmode="array",
             tickvals=[0, len(df) - 1],
-            ticktext=[f"{df['Time'].iloc[0][:2]}:{df['Time'].iloc[0][2:]}", f"{df['Time'].iloc[-1][:2]}:{df['Time'].iloc[-1][2:]}"],
+            ticktext=[time_labels[0], time_labels[-1]],
             tickfont=dict(color=TEXT_MUTED, size=10),
             showgrid=False,
         ),
