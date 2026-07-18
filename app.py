@@ -46,6 +46,12 @@ def load_history(symbol: str):
 # MA 線刻意避開紅/綠（留給K線漲跌用），深色底上要夠亮才看得清楚
 MA_COLORS = {5: "#5b9bd5", 10: "#a89ef0", 20: "#f0b429", 60: "#c4c1b8"}
 
+# 「今日」沒有放進來：我們的歷史資料是日線（一天一根K棒），沒有分鐘級盤中資料，
+# 「今日」放進日K圖只會看到1根棒子沒有意義。之後若要做盤中圖是另一個功能。
+RANGE_OPTIONS = {"1個月": 21, "3個月": 63, "6個月": 126, "1年": 252, "全部": None}
+selected_range = st.segmented_control("time range", options=list(RANGE_OPTIONS.keys()), default="3個月", label_visibility="collapsed")
+selected_range = selected_range or "3個月"
+
 for item in WATCHLIST:
     symbol, name = item["symbol"], item["name"]
 
@@ -53,7 +59,8 @@ for item in WATCHLIST:
     price = get_current_price(symbol, df)
     df = add_moving_averages(df, MA_WINDOWS)  # 用全部歷史算，均線在顯示範圍起點才不會不準
     latest = df.iloc[-1]
-    display_df = df.tail(90)  # 畫面只顯示近90個交易日，資料點太多會擠成一片糊掉
+    n = RANGE_OPTIONS[selected_range]
+    display_df = df if n is None else df.tail(n)
 
     with st.container(border=True):
         col1, col2 = st.columns([3, 1])
