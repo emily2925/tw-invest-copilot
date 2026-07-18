@@ -94,14 +94,16 @@ def sentiment_tier(change_pct: float) -> str:
     return "持平"
 
 
-if __name__ == "__main__":
-    # Demo：查「最近一次已結束的夜盤」= 今天(或之後)最近的下一個交易日
+def get_overnight_sentiment() -> dict:
+    """統一入口：回傳「最近一次已結束的夜盤」資料 + 情緒分級，給 dashboard 直接用。"""
     query_day = next_trading_day(date.today())
-    print(f"今天：{date.today()}，查詢日期（下一個交易日）：{query_day}")
-
     data = fetch_tx_night_session(query_day)
+    data["sentiment"] = sentiment_tier(data["change_pct"])
+    return data
 
+
+if __name__ == "__main__":
+    result = get_overnight_sentiment()
     print("=== 台指期夜盤（近月合約）===")
-    for k, v in data.items():
+    for k, v in result.items():
         print(f"{k}: {v}")
-    print(f"隔夜情緒分級: {sentiment_tier(data['change_pct'])}")
