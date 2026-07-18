@@ -20,7 +20,7 @@ from config.watchlist import WATCHLIST
 from data.fetch import fetch_history, get_current_price
 from data.indicators import add_bollinger_bands, add_moving_averages, front_high_signal, MA_WINDOWS
 from data.macro import fetch_foreign_futures_position, fetch_sox, fetch_twd_usd, value_and_change
-from data.overnight import fetch_overnight_trend
+from data.overnight import fetch_overnight_intraday, get_overnight_sentiment
 
 ACCENT = "#e8935a"
 BG = "#0d0d0d"
@@ -54,8 +54,6 @@ def load_history(symbol: str):
 
 @st.cache_data(ttl=21600)  # 6小時：這幾個都要逐日查詢很慢，拉長快取效期
 def load_macro_series(kind: str):
-    if kind == "overnight":
-        return fetch_overnight_trend(lookback_trading_days=20)
     if kind == "twd":
         return fetch_twd_usd(period="1mo")
     if kind == "sox":
@@ -63,6 +61,16 @@ def load_macro_series(kind: str):
     if kind == "foreign_futures":
         return fetch_foreign_futures_position(lookback_trading_days=20)
     raise ValueError(kind)
+
+
+@st.cache_data(ttl=1800)
+def load_overnight_summary():
+    return get_overnight_sentiment()
+
+
+@st.cache_data(ttl=1800)
+def load_overnight_intraday():
+    return fetch_overnight_intraday()
 
 
 def day_over_day_change(df: pd.DataFrame) -> dict:
@@ -107,23 +115,72 @@ def render_sparkline(df, up: bool):
     return fig
 
 
+def render_intraday_line(df):
+    """夜盤走勢圖：整個交易時段的逐分鐘折線（不是逐日收盤價），x 軸留開盤/收盤時間點。"""
+    values = df["Close"]
+    up = values.iloc[-1] >= values.iloc[0]
+    line_color = "#ef5350" if up else "#4caf50"
+    pad = (values.max() - values.min()) * 0.15 or values.max() * 0.01
+
+    fig = go.Figure()
+    fig.add_trace(go.Scatter(x=list(range(len(df))), y=values, mode="lines", line=dict(color=line_color, width=1.5)))
+    fig.update_layout(
+        height=70,
+        margin=dict(l=0, r=0, t=4, b=4),
+        showlegend=False,
+        plot_bgcolor=CARD_BG,
+        paper_bgcolor=CARD_BG,
+        yaxis=dict(visible=False, range=[values.min() - pad, values.max() + pad]),
+        xaxis=dict(
+            tickmode="array",
+            tickvals=[0, len(df) - 1],
+            ticktext=[f"{df['Time'].iloc[0][:2]}:{df['Time'].iloc[0][2:]}", f"{df['Time'].iloc[-1][:2]}:{df['Time'].iloc[-1][2:]}"],
+            tickfont=dict(color=TEXT_MUTED, size=10),
+            showgrid=False,
+        ),
+    )
+    return fig
+
+
 st.markdown(
     f"<div style='color:{ACCENT}; font-size:16px; margin-bottom:8px;'>警示指標</div>",
     unsafe_allow_html=True,
 )
 
-# change_mode: "day_over_day"（跟前一筆比，夜盤用）／"period"（跟區間第一筆比）／None（不顯示%，外資空單用，
+alert_cols = st.columns(4)
+
+# 台指夜盤：獨立處理——走勢圖是「最近一次整個交易時段」的逐分鐘折線，
+# 不是逐日收盤價；標題數值/漲跌%用 TAIFEX 每日行情表的官方收盤數字（跟逐分鐘資料最後一筆
+# 會有些微差異，屬正常現象，官方數字才是準的）。
+with alert_cols[0]:
+    with st.container(border=True):
+        try:
+            summary = load_overnight_summary()
+            intraday = load_overnight_intraday()
+            up = summary["change_pct"] >= 0
+            c = "#ef5350" if up else "#4caf50"
+            st.markdown(
+                f"""
+                <div style="color:{TEXT_MUTED}; font-size:12px;">台指夜盤（昨夜，{summary['expiry']}）</div>
+                <div style="font-size:24px; margin:2px 0;">{summary['close']:,.0f}</div>
+                <div style="color:{c}; font-size:13px;">{summary['change']} ({summary['change_pct']:+.2f}%)</div>
+                """,
+                unsafe_allow_html=True,
+            )
+            st.plotly_chart(render_intraday_line(intraday), width="stretch", config={"displayModeBar": False})
+        except Exception as e:
+            st.markdown(f"<div style='color:{TEXT_MUTED}; font-size:12px;'>台指夜盤：暫時抓不到（{e}）</div>", unsafe_allow_html=True)
+
+# change_mode: "period"（跟區間第一筆比）／None（不顯示%，外資空單用，
 # 因為數值本身是負的，「淨空單越多」是往更負的方向走，%變化不直觀甚至會誤導）
 ALERT_INDICATORS = [
-    {"key": "overnight", "label": "台指夜盤（近1個月）", "fmt": ",.0f", "change_mode": "day_over_day", "note": None},
     {"key": "twd", "label": "台幣兌美元（近1個月）", "fmt": ".3f", "change_mode": "period", "note": None},
     {"key": "sox", "label": "費城半導體指數（近1個月）", "fmt": ",.0f", "change_mode": "period", "note": None},
     {"key": "foreign_futures", "label": "外資台指期未平倉淨額（近1個月）", "fmt": ",.0f", "change_mode": None,
      "note": "外資台指期貨(TXF)多空未平倉淨額口數，資料源 TAIFEX，負值代表淨空單，越負代表空單越多"},
 ]
 
-alert_cols = st.columns(4)
-for col, spec in zip(alert_cols, ALERT_INDICATORS):
+for col, spec in zip(alert_cols[1:], ALERT_INDICATORS):
     with col:
         with st.container(border=True):
             try:
