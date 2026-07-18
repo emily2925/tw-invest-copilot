@@ -51,8 +51,9 @@ for item in WATCHLIST:
 
     df = load_history(symbol)
     price = get_current_price(symbol, df)
-    df = add_moving_averages(df, MA_WINDOWS)
+    df = add_moving_averages(df, MA_WINDOWS)  # 用全部歷史算，均線在顯示範圍起點才不會不準
     latest = df.iloc[-1]
+    display_df = df.tail(90)  # 畫面只顯示近90個交易日，資料點太多會擠成一片糊掉
 
     with st.container(border=True):
         col1, col2 = st.columns([3, 1])
@@ -68,16 +69,19 @@ for item in WATCHLIST:
                 unsafe_allow_html=True,
             )
 
+        dates_str = display_df.index.strftime("%Y-%m-%d")  # 類別軸用字串日期，天然跳過週末不留空隙
+
         fig = go.Figure()
         fig.add_trace(
             go.Candlestick(
-                x=df.index,
-                open=df["Open"],
-                high=df["High"],
-                low=df["Low"],
-                close=df["Close"],
+                x=dates_str,
+                open=display_df["Open"],
+                high=display_df["High"],
+                low=display_df["Low"],
+                close=display_df["Close"],
                 name="K線",
                 showlegend=False,
+                line=dict(width=1),
                 # 台股慣例：紅漲、綠跌（跟 Plotly 預設的美式紅跌綠漲相反）
                 increasing_line_color="#ef5350",
                 increasing_fillcolor="#ef5350",
@@ -90,10 +94,10 @@ for item in WATCHLIST:
             label = f"MA{w} {ma_value:.1f}" if pd.notna(ma_value) else f"MA{w} N/A"
             fig.add_trace(
                 go.Scatter(
-                    x=df.index,
-                    y=df[f"MA{w}"],
+                    x=dates_str,
+                    y=display_df[f"MA{w}"],
                     name=label,
-                    line=dict(color=MA_COLORS[w], width=1.5),
+                    line=dict(color=MA_COLORS[w], width=1),
                 )
             )
         fig.update_layout(
@@ -108,7 +112,7 @@ for item in WATCHLIST:
             paper_bgcolor=CARD_BG,
             font=dict(color=TEXT_MUTED, family="monospace"),
             hovermode="x unified",
-            xaxis=dict(showgrid=False, color=TEXT_MUTED),
+            xaxis=dict(type="category", showgrid=False, color=TEXT_MUTED, nticks=8),
             yaxis=dict(gridcolor=GRID, color=TEXT_MUTED),
         )
         st.plotly_chart(fig, use_container_width=True)
