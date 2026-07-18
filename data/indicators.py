@@ -88,3 +88,12 @@ if __name__ == "__main__":
         mas = latest_ma_values(df)
         ma_str = "  ".join(f"{k}={v:.2f}" if v is not None else f"{k}=N/A" for k, v in mas.items())
         print(f"{name}（{symbol}）現價 {price:.2f}｜{ma_str}")
+
+        bb = add_bollinger_bands(df).iloc[-1]
+        print(
+            f"  布林通道: 下軌 {bb['BB_lower']:.2f}｜中線 {bb['BB_mid']:.2f}｜上軌 {bb['BB_upper']:.2f}"
+        )
+
+        signal = front_high_signal(df, price)
+        print(f"  前高訊號: {signal['message'] if signal else '無（目前價格尚未跌破任何已驗證前高）'}")
+        print()
