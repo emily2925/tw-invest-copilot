@@ -31,6 +31,8 @@ try:
     from agent.daily_brief import build_signal_summary, generate_daily_brief
     from agent.spend_tracker import add_spend, load_total_spend
     from config.watchlist import WATCHLIST
+    from market_data.earnings import prepare_eps_summary
+    from market_data.eps_fetch import fetch_quarterly_eps
     from market_data.fundamental_fetch import fetch_monthly_revenue
     from market_data.fundamentals import is_company_fundamentals_applicable, prepare_revenue_trend
     from market_data.fetch import fetch_history, get_current_price
@@ -112,6 +114,20 @@ def load_revenue_trend(symbol: str):
     """抓足夠月份計算 YoY，但畫面只顯示最近12個月。"""
     revenue = fetch_monthly_revenue(symbol, lookback_months=30)
     return prepare_revenue_trend(revenue, display_months=12)
+
+
+@st.cache_data(ttl=21600)
+def load_eps_summary(symbol: str):
+    return prepare_eps_summary(fetch_quarterly_eps(symbol, lookback_years=4))
+
+
+@st.cache_data(ttl=21600)
+def load_current_pe(symbol: str):
+    pe = fetch_pe_history(symbol, lookback_days=180)
+    valid = pe[pe["PER"] > 0].dropna(subset=["PER"])
+    if valid.empty:
+        raise ValueError("最近半年沒有正本益比資料")
+    return {"value": float(valid["PER"].iloc[-1]), "date": valid.index[-1]}
 
 
 @st.cache_data(ttl=21600)  # 6小時：這幾個都要逐日查詢很慢，拉長快取效期
@@ -718,11 +734,11 @@ for t in ticker_data:
         if is_company_fundamentals_applicable(symbol):
             revenue_control, pe_control = st.columns(2)
             with revenue_control:
-                show_revenue = st.toggle("顯示月營收趨勢", key=f"show_revenue_{symbol}")
+                show_fundamentals = st.toggle("顯示基本面摘要", key=f"show_fundamentals_{symbol}")
             with pe_control:
                 show_pe_river = st.toggle("顯示本益比河流圖", key=f"show_pe_river_{symbol}")
 
-            if show_revenue:
+            if show_fundamentals:
                 try:
                     revenue_result = load_revenue_trend(symbol)
                     period = revenue_result["latest_period"].strftime("%Y/%m")
@@ -768,6 +784,47 @@ for t in ticker_data:
                     )
                 except Exception as e:
                     st.info(f"月營收趨勢目前抓不到：{e}")
+
+                try:
+                    eps_result = load_eps_summary(symbol)
+                    eps_date = eps_result["latest_date"]
+                    quarter = f"{eps_date.year} Q{(eps_date.month - 1) // 3 + 1}"
+                    eps_yoy = eps_result["quarterly_yoy_pct"]
+                    eps_yoy_text = "N/A" if eps_yoy is None else f"{eps_yoy:+.1f}%"
+                    eps_yoy_color = (
+                        TEXT_MUTED if eps_yoy is None else ("#ef5350" if eps_yoy >= 0 else "#4caf50")
+                    )
+                    try:
+                        current_pe = load_current_pe(symbol)
+                        pe_text = f"{current_pe['value']:.1f}x"
+                        pe_date_text = current_pe["date"].strftime("%Y-%m-%d")
+                    except Exception:
+                        pe_text = "N/A"
+                        pe_date_text = "無正 PE 資料"
+
+                    st.markdown(
+                        f"<div style='color:{ACCENT}; font-size:14px; margin-top:12px;'>實際獲利與估值</div>"
+                        f"<div style='display:flex; gap:12px; flex-wrap:wrap; margin:7px 0 4px;'>"
+                        f"<div style='flex:1; min-width:140px; background:{GRID}55; border-radius:7px; padding:8px 12px;'>"
+                        f"<div style='color:{TEXT_MUTED}; font-size:11px;'>{quarter} 單季 EPS</div>"
+                        f"<div style='font-size:18px;'>{eps_result['latest_eps']:.2f} 元</div></div>"
+                        f"<div style='flex:1; min-width:140px; background:{GRID}55; border-radius:7px; padding:8px 12px;'>"
+                        f"<div style='color:{TEXT_MUTED}; font-size:11px;'>近四季實際 EPS</div>"
+                        f"<div style='font-size:18px;'>{eps_result['ttm_eps']:.2f} 元</div></div>"
+                        f"<div style='flex:1; min-width:140px; background:{GRID}55; border-radius:7px; padding:8px 12px;'>"
+                        f"<div style='color:{TEXT_MUTED}; font-size:11px;'>單季 EPS YoY</div>"
+                        f"<div style='color:{eps_yoy_color}; font-size:18px;'>{eps_yoy_text}</div></div>"
+                        f"<div style='flex:1; min-width:140px; background:{GRID}55; border-radius:7px; padding:8px 12px;'>"
+                        f"<div style='color:{TEXT_MUTED}; font-size:11px;'>目前官方 PE</div>"
+                        f"<div style='font-size:18px;'>{pe_text}</div></div></div>",
+                        unsafe_allow_html=True,
+                    )
+                    st.caption(
+                        f"EPS 資料源：FinMind TaiwanStockFinancialStatements，最新財報季度 {quarter}；"
+                        f"PE 資料源：TaiwanStockPER，資料日期 {pe_date_text}。以上皆為已公告實際值。"
+                    )
+                except Exception as e:
+                    st.info(f"實際 EPS 摘要目前抓不到：{e}")
 
             if show_pe_river:
                 try:
