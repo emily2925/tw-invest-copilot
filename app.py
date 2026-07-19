@@ -69,10 +69,27 @@ st.markdown(
 
 # 分類順序依 WATCHLIST 第一次出現的順序，避免每次重跑後選項跳動。
 categories = list(dict.fromkeys(item["category"] for item in WATCHLIST))
-selected_category = st.selectbox(
-    "產業篩選",
-    options=["全部", *categories],
-)
+RANGE_OPTIONS = {"1個月": 21, "3個月": 63, "6個月": 126, "1年": 252, "全部": None}
+
+with st.container(border=True):
+    st.markdown(
+        f"<div style='color:{ACCENT}; font-size:14px; margin-bottom:4px;'>標的檢視</div>",
+        unsafe_allow_html=True,
+    )
+    category_col, range_col = st.columns([1, 2])
+    with category_col:
+        selected_category = st.selectbox(
+            "產業篩選",
+            options=["全部", *categories],
+        )
+    with range_col:
+        selected_range = st.segmented_control(
+            "時間範圍",
+            options=list(RANGE_OPTIONS.keys()),
+            default="3個月",
+        )
+        selected_range = selected_range or "3個月"
+
 if selected_category == "全部":
     filtered_watchlist = WATCHLIST
 else:
@@ -140,11 +157,6 @@ front_high_signals_for_brief = [
 if "daily_brief" not in st.session_state:
     st.session_state.daily_brief = None
 
-st.markdown(
-    f"<div style='color:{ACCENT}; font-size:16px; margin-bottom:8px;'>今日重點（AI 摘要）</div>",
-    unsafe_allow_html=True,
-)
-
 # AI 按鈕的密碼保護：部署到公開網址後，任何人點這顆按鈕都是花「我的」API 額度，
 # 所以在 Streamlit secrets 設一組 AI_UNLOCK_PASSWORD 就會要求輸入密碼才能點。
 # 本機自己用時不設這個 secret，button 就照常開放（零摩擦）。
@@ -160,7 +172,23 @@ ai_unlocked = True
 if required_pw and not st.session_state.get("ai_unlocked", False):
     ai_unlocked = False
 
-brief_col, spend_col = st.columns([3, 1])
+# AI 摘要獨立成完整卡片；花費只留右上角的精簡資訊，不再占一整欄與進度條。
+total_spend = load_total_spend()
+with st.container(border=True):
+    brief_header_col, cost_col = st.columns([4, 1])
+    with brief_header_col:
+        st.markdown(
+            f"<div style='color:{ACCENT}; font-size:16px;'>AI 今日重點</div>"
+            f"<div style='color:{TEXT_MUTED}; font-size:11px;'>依目前篩選標的與最新市場訊號產生</div>",
+            unsafe_allow_html=True,
+        )
+    with cost_col:
+        st.markdown(
+            f"<div style='text-align:right; color:{TEXT_MUTED}; font-size:11px;'>AI 花費</div>"
+            f"<div style='text-align:right; font-size:12px;'>${total_spend:.3f} / ${BUDGET_USD:.2f}</div>",
+            unsafe_allow_html=True,
+        )
+    brief_col = st.container()
 
 with brief_col:
     if required_pw and not ai_unlocked:
@@ -245,18 +273,6 @@ with brief_col:
                 f"產生時間 {brief['generated_at']} · 這次花費 ${brief['cost_usd']:.4f}</div>",
                 unsafe_allow_html=True,
             )
-
-with spend_col:
-    total_spend = load_total_spend()
-    fraction = min(total_spend / BUDGET_USD, 1.0) if BUDGET_USD else 0.0
-    st.markdown(f"<div style='color:{TEXT_MUTED}; font-size:12px;'>AI 摘要累積花費</div>", unsafe_allow_html=True)
-    st.progress(fraction)
-    st.markdown(
-        f"<div style='font-size:13px;'>已用 ${total_spend:.3f} / ${BUDGET_USD:.2f}"
-        f"<br>剩餘 ${max(BUDGET_USD - total_spend, 0):.3f}</div>",
-        unsafe_allow_html=True,
-    )
-
 
 def day_over_day_change(df: pd.DataFrame) -> dict:
     """跟前一筆比（不是跟整段區間第一筆比）。夜盤用這個比較合理——
@@ -425,14 +441,6 @@ MA_COLORS = {5: "#5b9bd5", 10: "#a89ef0", 20: "#f0b429", 60: "#c4c1b8"}
 
 # 「今日」沒有放進來：我們的歷史資料是日線（一天一根K棒），沒有分鐘級盤中資料，
 # 「今日」放進日K圖只會看到1根棒子沒有意義。之後若要做盤中圖是另一個功能。
-RANGE_OPTIONS = {"1個月": 21, "3個月": 63, "6個月": 126, "1年": 252, "全部": None}
-selected_range = st.segmented_control(
-    "時間範圍",
-    options=list(RANGE_OPTIONS.keys()),
-    default="3個月",
-)
-selected_range = selected_range or "3個月"
-
 previous_category = None
 for t in ticker_data:
     symbol, name, category, df, price, signal = (
