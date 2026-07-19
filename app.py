@@ -59,6 +59,29 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
+# 分類順序依 WATCHLIST 第一次出現的順序，避免每次重跑後選項跳動。
+categories = list(dict.fromkeys(item["category"] for item in WATCHLIST))
+filter_mode = st.segmented_control(
+    "標的範圍",
+    options=["全部", "選擇產業"],
+    default="全部",
+)
+if filter_mode == "選擇產業":
+    selected_categories = st.multiselect(
+        "產業篩選",
+        options=categories,
+        default=categories,
+        placeholder="選擇要查看的產業",
+    )
+else:
+    selected_categories = categories
+filtered_watchlist = [item for item in WATCHLIST if item["category"] in selected_categories]
+
+if not selected_categories:
+    st.info("請至少選擇一個產業，才會載入追蹤標的。")
+else:
+    st.caption(f"目前顯示 {len(filtered_watchlist)} 個標的／{len(selected_categories)} 個分類")
+
 
 @st.cache_data(ttl=300)
 def load_history(symbol: str):
@@ -91,14 +114,23 @@ def load_overnight_intraday():
 # 下面實際畫圖的迴圈會直接重用這裡算好的 df/price/signal，不會重算一次
 # （尤其 get_current_price 會打即時報價 API，重算等於多打一次）。
 ticker_data = []
-for item in WATCHLIST:
+for item in filtered_watchlist:
     _symbol, _name = item["symbol"], item["name"]
     _df = load_history(_symbol)
     _price = get_current_price(_symbol, _df)
     _df = add_moving_averages(_df, MA_WINDOWS)
     _df = add_bollinger_bands(_df)
     _signal = front_high_signal(_df, _price)
-    ticker_data.append({"symbol": _symbol, "name": _name, "df": _df, "price": _price, "signal": _signal})
+    ticker_data.append(
+        {
+            "symbol": _symbol,
+            "name": _name,
+            "category": item["category"],
+            "df": _df,
+            "price": _price,
+            "signal": _signal,
+        }
+    )
 
 front_high_signals_for_brief = [
     {"name": t["name"], "message": t["signal"]["message"]} for t in ticker_data if t["signal"]
@@ -397,11 +429,48 @@ MA_COLORS = {5: "#5b9bd5", 10: "#a89ef0", 20: "#f0b429", 60: "#c4c1b8"}
 # 「今日」沒有放進來：我們的歷史資料是日線（一天一根K棒），沒有分鐘級盤中資料，
 # 「今日」放進日K圖只會看到1根棒子沒有意義。之後若要做盤中圖是另一個功能。
 RANGE_OPTIONS = {"1個月": 21, "3個月": 63, "6個月": 126, "1年": 252, "全部": None}
-selected_range = st.segmented_control("time range", options=list(RANGE_OPTIONS.keys()), default="3個月", label_visibility="collapsed")
+chart_control_col, range_control_col = st.columns([1, 2])
+with chart_control_col:
+    chart_mode = st.segmented_control(
+        "圖表顯示",
+        options=["單一標的", "全部展開"],
+        default="單一標的",
+    )
+with range_control_col:
+    selected_range = st.segmented_control(
+        "時間範圍",
+        options=list(RANGE_OPTIONS.keys()),
+        default="3個月",
+    )
 selected_range = selected_range or "3個月"
 
-for t in ticker_data:
-    symbol, name, df, price, signal = t["symbol"], t["name"], t["df"], t["price"], t["signal"]
+if chart_mode == "全部展開":
+    displayed_ticker_data = ticker_data
+else:
+    ticker_by_symbol = {t["symbol"]: t for t in ticker_data}
+    selected_symbol = st.selectbox(
+        "選擇標的",
+        options=list(ticker_by_symbol),
+        format_func=lambda symbol: (
+            f"{ticker_by_symbol[symbol]['name']}　{symbol.split('.')[0]}"
+            f"　·　{ticker_by_symbol[symbol]['category']}"
+        ),
+    ) if ticker_by_symbol else None
+    displayed_ticker_data = [ticker_by_symbol[selected_symbol]] if selected_symbol else []
+
+previous_category = None
+for t in displayed_ticker_data:
+    symbol, name, category, df, price, signal = (
+        t["symbol"], t["name"], t["category"], t["df"], t["price"], t["signal"]
+    )
+
+    if chart_mode == "全部展開" and category != previous_category:
+        st.markdown(
+            f"<div style='color:{ACCENT}; font-size:14px; margin:18px 0 6px;'>"
+            f"{category}</div>",
+            unsafe_allow_html=True,
+        )
+        previous_category = category
 
     latest = df.iloc[-1]  # df 已經在前面的計算階段加好 MA/布林了
     n = RANGE_OPTIONS[selected_range]
@@ -422,7 +491,9 @@ for t in ticker_data:
     with st.container(border=True):
         st.markdown(
             f"<span style='color:{TEXT_MUTED}; font-size:15px;'>{name}</span> "
-            f"<span style='color:{TEXT_MUTED}; font-size:13px;'>{symbol}</span>",
+            f"<span style='color:{TEXT_MUTED}; font-size:13px;'>{symbol}</span> "
+            f"<span style='color:{ACCENT}; font-size:11px; border:1px solid {ACCENT}66; "
+            f"border-radius:10px; padding:1px 7px;'>{category}</span>",
             unsafe_allow_html=True,
         )
         st.markdown(
