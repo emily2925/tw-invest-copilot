@@ -19,6 +19,62 @@ def latest_ma_values(df: pd.DataFrame, windows: list[int] = MA_WINDOWS) -> dict:
     return {f"MA{w}": (None if pd.isna(latest[f"MA{w}"]) else float(latest[f"MA{w}"])) for w in windows}
 
 
+def moving_average_cross_signals(
+    df: pd.DataFrame,
+    current_price: float,
+    windows: list[int] = MA_WINDOWS,
+    live_price_tolerance: float = 0.01,
+) -> list[dict]:
+    """偵測目前價格是否剛穿越均線，避免只因長期位於均線同側就重複警示。
+
+    若目前價格不同於歷史資料最後收盤價，視為盤中即時價：以前一收盤作為比較基準，
+    並把即時價納入當日暫估均線。若兩者相同，則比較最近兩個正式收盤日。
+    """
+    closes = df["Close"].astype(float)
+    if len(closes) < 2:
+        return []
+
+    latest_close = float(closes.iloc[-1])
+    is_live = abs(current_price - latest_close) >= live_price_tolerance
+    signals = []
+
+    for window in windows:
+        if is_live:
+            if len(closes) < window:
+                continue
+            previous_price = latest_close
+            previous_ma = float(closes.tail(window).mean())
+            current_ma = float((closes.tail(window - 1).sum() + current_price) / window)
+        else:
+            if len(closes) < window + 1:
+                continue
+            previous_price = float(closes.iloc[-2])
+            previous_ma = float(closes.iloc[-window - 1 : -1].mean())
+            current_ma = float(closes.tail(window).mean())
+
+        if previous_price >= previous_ma and current_price < current_ma:
+            direction = "down"
+            action = "跌破"
+        elif previous_price <= previous_ma and current_price > current_ma:
+            direction = "up"
+            action = "站上"
+        else:
+            continue
+
+        prefix = "盤中" if is_live else "收盤"
+        signals.append(
+            {
+                "window": window,
+                "direction": direction,
+                "ma_value": current_ma,
+                "is_live": is_live,
+                "message": f"{prefix}{action} {window}MA 了！均線 {current_ma:.1f}",
+            }
+        )
+
+    return signals
+
+
 def add_bollinger_bands(df: pd.DataFrame, window: int = 20, num_std: float = 2.0) -> pd.DataFrame:
     """布林通道：window 日均線 ± num_std 倍標準差。"""
     df = df.copy()

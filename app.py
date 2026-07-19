@@ -31,7 +31,13 @@ try:
     from agent.spend_tracker import add_spend, load_total_spend
     from config.watchlist import WATCHLIST
     from market_data.fetch import fetch_history, get_current_price
-    from market_data.indicators import add_bollinger_bands, add_moving_averages, front_high_signal, MA_WINDOWS
+    from market_data.indicators import (
+        MA_WINDOWS,
+        add_bollinger_bands,
+        add_moving_averages,
+        front_high_signal,
+        moving_average_cross_signals,
+    )
     from market_data.macro import fetch_foreign_futures_position, fetch_sox, fetch_twd_usd, value_and_change
     from market_data.overnight import fetch_overnight_intraday, get_overnight_sentiment
 except ModuleNotFoundError as exc:
@@ -121,6 +127,7 @@ for item in filtered_watchlist:
     _df = add_moving_averages(_df, MA_WINDOWS)
     _df = add_bollinger_bands(_df)
     _signal = front_high_signal(_df, _price)
+    _ma_signals = moving_average_cross_signals(_df, _price, MA_WINDOWS)
     ticker_data.append(
         {
             "symbol": _symbol,
@@ -129,6 +136,7 @@ for item in filtered_watchlist:
             "df": _df,
             "price": _price,
             "signal": _signal,
+            "ma_signals": _ma_signals,
         }
     )
 
@@ -452,8 +460,8 @@ MA_COLORS = {5: "#5b9bd5", 10: "#a89ef0", 20: "#f0b429", 60: "#c4c1b8"}
 # 「今日」放進日K圖只會看到1根棒子沒有意義。之後若要做盤中圖是另一個功能。
 previous_category = None
 for t in ticker_data:
-    symbol, name, category, df, price, signal = (
-        t["symbol"], t["name"], t["category"], t["df"], t["price"], t["signal"]
+    symbol, name, category, df, price, signal, ma_signals = (
+        t["symbol"], t["name"], t["category"], t["df"], t["price"], t["signal"], t["ma_signals"]
     )
 
     if selected_category == "全部" and category != previous_category:
@@ -507,6 +515,17 @@ for t in ticker_data:
                 f"{signal['message']}</div>",
                 unsafe_allow_html=True,
             )
+
+        if ma_signals:
+            badges = []
+            for ma_signal in ma_signals:
+                color = "#4caf50" if ma_signal["direction"] == "down" else "#ef5350"
+                badges.append(
+                    f"<span style='background:{color}18; color:{color}; border:1px solid {color}55; "
+                    f"border-radius:6px; padding:5px 10px; font-size:12px; display:inline-block; "
+                    f"margin:0 6px 8px 0;'>{ma_signal['message']}</span>"
+                )
+            st.markdown("".join(badges), unsafe_allow_html=True)
 
         dates_str = display_df.index.strftime("%Y-%m-%d")  # 類別軸用字串日期，天然跳過週末不留空隙
 
