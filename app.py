@@ -17,6 +17,7 @@ import plotly.graph_objects as go
 import streamlit as st
 
 from agent.daily_brief import build_signal_summary, generate_daily_brief
+from agent.spend_tracker import add_spend, load_total_spend
 from config.watchlist import WATCHLIST
 from data.fetch import fetch_history, get_current_price
 from data.indicators import add_bollinger_bands, add_moving_averages, front_high_signal, MA_WINDOWS
@@ -28,6 +29,7 @@ BG = "#0d0d0d"
 CARD_BG = "#161616"
 GRID = "#2a2a2a"
 TEXT_MUTED = "#8a8880"
+BUDGET_USD = 5.0  # AI 摘要功能的花費上限提示，之後隨時可以改
 
 st.set_page_config(page_title="台股投資 AI 工具", layout="wide")
 
@@ -72,6 +74,100 @@ def load_overnight_summary():
 @st.cache_data(ttl=1800)
 def load_overnight_intraday():
     return fetch_overnight_intraday()
+
+
+# 追蹤清單先做「只算資料、不畫圖」這一輪，因為 AI 今日重點需要前高訊號，
+# 而今日重點被移到頁面最上面，得在畫任何卡片之前就先把訊號算出來。
+# 下面實際畫圖的迴圈會直接重用這裡算好的 df/price/signal，不會重算一次
+# （尤其 get_current_price 會打即時報價 API，重算等於多打一次）。
+ticker_data = []
+for item in WATCHLIST:
+    _symbol, _name = item["symbol"], item["name"]
+    _df = load_history(_symbol)
+    _price = get_current_price(_symbol, _df)
+    _df = add_moving_averages(_df, MA_WINDOWS)
+    _df = add_bollinger_bands(_df)
+    _signal = front_high_signal(_df, _price)
+    ticker_data.append({"symbol": _symbol, "name": _name, "df": _df, "price": _price, "signal": _signal})
+
+front_high_signals_for_brief = [
+    {"name": t["name"], "message": t["signal"]["message"]} for t in ticker_data if t["signal"]
+]
+
+
+# 今日重點（AI 摘要）——移到頁面最上面，且改成按鈕觸發，不要每次 refresh 都打一次 API。
+# 花費追蹤：st.session_state 只在瀏覽器分頁存在期間有效，重整伺服器就歸零，
+# 所以「總共花了多少」另外存進本機 .spend_tracker.json（見 agent/spend_tracker.py）。
+if "daily_brief" not in st.session_state:
+    st.session_state.daily_brief = None
+
+st.markdown(
+    f"<div style='color:{ACCENT}; font-size:16px; margin-bottom:8px;'>今日重點（AI 摘要）</div>",
+    unsafe_allow_html=True,
+)
+
+brief_col, spend_col = st.columns([3, 1])
+
+with brief_col:
+    if st.button("🔄 產生今日重點"):
+        try:
+            overnight_summary = load_overnight_summary()
+            foreign_futures_series = load_macro_series("foreign_futures")
+            twd_series = load_macro_series("twd")
+            sox_series = load_macro_series("sox")
+            foreign_futures_vc = value_and_change(foreign_futures_series)
+            sox_vc = value_and_change(sox_series)
+
+            signal_text = build_signal_summary(
+                overnight=overnight_summary,
+                foreign_futures_current=float(foreign_futures_series["Close"].iloc[-1]),
+                foreign_futures_change_pct=foreign_futures_vc["change_pct"],
+                twd_current=float(twd_series["Close"].iloc[-1]),
+                sox_current=float(sox_series["Close"].iloc[-1]),
+                sox_change_pct=sox_vc["change_pct"],
+                front_high_signals=front_high_signals_for_brief,
+            )
+            result = generate_daily_brief(signal_text)
+            add_spend(result["cost_usd"])
+            st.session_state.daily_brief = {
+                "text": result["text"],
+                "cost_usd": result["cost_usd"],
+                "generated_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                "error": None,
+            }
+        except Exception as e:
+            st.session_state.daily_brief = {"text": None, "cost_usd": None, "generated_at": None, "error": str(e)}
+
+    brief = st.session_state.daily_brief
+    if brief is None:
+        st.markdown(
+            f"<div style='color:{TEXT_MUTED}; font-size:13px;'>按上面的按鈕，根據最新資料產生今日重點摘要</div>",
+            unsafe_allow_html=True,
+        )
+    elif brief["error"]:
+        st.markdown(
+            f"<div style='color:{TEXT_MUTED}; font-size:13px;'>今日重點暫時生成不了（{brief['error']}）</div>",
+            unsafe_allow_html=True,
+        )
+    else:
+        with st.container(border=True):
+            st.markdown(f"<div style='line-height:1.7;'>{brief['text']}</div>", unsafe_allow_html=True)
+            st.markdown(
+                f"<div style='color:{TEXT_MUTED}; font-size:11px; margin-top:6px;'>"
+                f"產生時間 {brief['generated_at']} · 這次花費 ${brief['cost_usd']:.4f}</div>",
+                unsafe_allow_html=True,
+            )
+
+with spend_col:
+    total_spend = load_total_spend()
+    fraction = min(total_spend / BUDGET_USD, 1.0) if BUDGET_USD else 0.0
+    st.markdown(f"<div style='color:{TEXT_MUTED}; font-size:12px;'>AI 摘要累積花費</div>", unsafe_allow_html=True)
+    st.progress(fraction)
+    st.markdown(
+        f"<div style='font-size:13px;'>已用 ${total_spend:.3f} / ${BUDGET_USD:.2f}"
+        f"<br>剩餘 ${max(BUDGET_USD - total_spend, 0):.3f}</div>",
+        unsafe_allow_html=True,
+    )
 
 
 def day_over_day_change(df: pd.DataFrame) -> dict:
@@ -245,21 +341,12 @@ RANGE_OPTIONS = {"1個月": 21, "3個月": 63, "6個月": 126, "1年": 252, "全
 selected_range = st.segmented_control("time range", options=list(RANGE_OPTIONS.keys()), default="3個月", label_visibility="collapsed")
 selected_range = selected_range or "3個月"
 
-front_high_signals_for_brief = []  # 給 Hour 7 的今日重點摘要用
+for t in ticker_data:
+    symbol, name, df, price, signal = t["symbol"], t["name"], t["df"], t["price"], t["signal"]
 
-for item in WATCHLIST:
-    symbol, name = item["symbol"], item["name"]
-
-    df = load_history(symbol)
-    price = get_current_price(symbol, df)
-    df = add_moving_averages(df, MA_WINDOWS)  # 用全部歷史算，均線在顯示範圍起點才不會不準
-    df = add_bollinger_bands(df)
-    latest = df.iloc[-1]
+    latest = df.iloc[-1]  # df 已經在前面的計算階段加好 MA/布林了
     n = RANGE_OPTIONS[selected_range]
     display_df = df if n is None else df.tail(n)
-    signal = front_high_signal(df, price)
-    if signal:
-        front_high_signals_for_brief.append({"name": name, "message": signal["message"]})
 
     # 判斷「前一收盤」：如果目前價格已經跟歷史最後一筆一樣（代表當下沒有更新的即時價，
     # 例如休市中），前一收盤要往前抓一天，不然漲跌會算成 0
@@ -369,41 +456,3 @@ for item in WATCHLIST:
             yaxis=dict(gridcolor=GRID, color=TEXT_MUTED),
         )
         st.plotly_chart(fig, width="stretch")
-
-
-# Hour 7：AI 今日重點摘要——把上面算好的訊號丟給 agent，生成一段自然語言摘要。
-# 這是這個週末唯一真正用到 agent framework（OpenAI Agents SDK + LiteLLM + Claude）的地方，
-# 其餘都是決定性的資料處理/規則判斷。
-
-
-@st.cache_data(ttl=1800)
-def load_daily_brief(signal_text: str) -> str:
-    return generate_daily_brief(signal_text)
-
-
-st.markdown(
-    f"<div style='color:{ACCENT}; font-size:16px; margin:24px 0 8px;'>今日重點（AI 摘要）</div>",
-    unsafe_allow_html=True,
-)
-try:
-    overnight_summary = load_overnight_summary()
-    foreign_futures_series = load_macro_series("foreign_futures")
-    twd_series = load_macro_series("twd")
-    sox_series = load_macro_series("sox")
-    foreign_futures_vc = value_and_change(foreign_futures_series)
-    sox_vc = value_and_change(sox_series)
-
-    signal_text = build_signal_summary(
-        overnight=overnight_summary,
-        foreign_futures_current=float(foreign_futures_series["Close"].iloc[-1]),
-        foreign_futures_change_pct=foreign_futures_vc["change_pct"],
-        twd_current=float(twd_series["Close"].iloc[-1]),
-        sox_current=float(sox_series["Close"].iloc[-1]),
-        sox_change_pct=sox_vc["change_pct"],
-        front_high_signals=front_high_signals_for_brief,
-    )
-    brief_text = load_daily_brief(signal_text)
-    with st.container(border=True):
-        st.markdown(f"<div style='line-height:1.7;'>{brief_text}</div>", unsafe_allow_html=True)
-except Exception as e:
-    st.markdown(f"<div style='color:{TEXT_MUTED}; font-size:13px;'>今日重點暫時生成不了（{e}）</div>", unsafe_allow_html=True)
