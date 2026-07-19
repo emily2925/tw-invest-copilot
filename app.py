@@ -15,6 +15,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
+from plotly.subplots import make_subplots
 
 # 部署到 Streamlit Cloud 時沒有本機的 .env，改把雲端 secrets 灌進環境變數，
 # 讓下面 data/、agent/ 模組既有的 os.environ.get(...) 在雲端也讀得到 key。
@@ -30,6 +31,8 @@ try:
     from agent.daily_brief import build_signal_summary, generate_daily_brief
     from agent.spend_tracker import add_spend, load_total_spend
     from config.watchlist import WATCHLIST
+    from market_data.fundamental_fetch import fetch_monthly_revenue
+    from market_data.fundamentals import is_company_fundamentals_applicable, prepare_revenue_trend
     from market_data.fetch import fetch_history, get_current_price
     from market_data.indicators import (
         MA_WINDOWS,
@@ -102,6 +105,13 @@ def load_pe_river(symbol: str):
     price_history = fetch_history(symbol, lookback_days=1900)
     pe_history = fetch_pe_history(symbol, lookback_days=1900)
     return build_pe_river(price_history, pe_history)
+
+
+@st.cache_data(ttl=21600)
+def load_revenue_trend(symbol: str):
+    """抓足夠月份計算 YoY，但畫面只顯示最近12個月。"""
+    revenue = fetch_monthly_revenue(symbol, lookback_months=30)
+    return prepare_revenue_trend(revenue, display_months=12)
 
 
 @st.cache_data(ttl=21600)  # 6小時：這幾個都要逐日查詢很慢，拉長快取效期
@@ -412,6 +422,51 @@ def render_pe_river(result: dict):
     return fig
 
 
+def render_revenue_trend(result: dict, months: int = 12):
+    """月營收柱狀圖搭配 YoY 折線，左右軸各自保留單位。"""
+    df = result["data"].tail(months)
+    month_labels = df.index.strftime("%Y/%m")
+    fig = make_subplots(specs=[[{"secondary_y": True}]])
+    fig.add_trace(
+        go.Bar(
+            x=month_labels,
+            y=df["revenue_100m"],
+            name="月營收（億元）",
+            marker_color="#5b9bd5",
+            hovertemplate="%{x}<br>營收 %{y:,.1f} 億元<extra></extra>",
+        ),
+        secondary_y=False,
+    )
+    fig.add_trace(
+        go.Scatter(
+            x=month_labels,
+            y=df["yoy_pct"],
+            name="YoY",
+            mode="lines+markers",
+            line=dict(color=ACCENT, width=2),
+            marker=dict(size=5),
+            hovertemplate="%{x}<br>YoY %{y:+.1f}%<extra></extra>",
+        ),
+        secondary_y=True,
+    )
+    fig.update_layout(
+        height=310,
+        margin=dict(l=10, r=10, t=12, b=10),
+        legend=dict(
+            orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1,
+            font=dict(color=TEXT_MUTED, size=10),
+        ),
+        plot_bgcolor=CARD_BG,
+        paper_bgcolor=CARD_BG,
+        font=dict(color=TEXT_MUTED, family="monospace"),
+        hovermode="x unified",
+        xaxis=dict(type="category", showgrid=False, color=TEXT_MUTED),
+    )
+    fig.update_yaxes(title_text="億元", gridcolor=GRID, color=TEXT_MUTED, secondary_y=False)
+    fig.update_yaxes(title_text="YoY %", showgrid=False, color=ACCENT, secondary_y=True)
+    return fig
+
+
 st.markdown(
     f"<div style='color:{ACCENT}; font-size:16px; margin-bottom:8px;'>警示指標</div>",
     unsafe_allow_html=True,
@@ -660,8 +715,60 @@ for t in ticker_data:
         )
         st.plotly_chart(fig, width="stretch")
 
-        if is_pe_river_applicable(symbol):
-            show_pe_river = st.toggle("顯示本益比河流圖", key=f"show_pe_river_{symbol}")
+        if is_company_fundamentals_applicable(symbol):
+            revenue_control, pe_control = st.columns(2)
+            with revenue_control:
+                show_revenue = st.toggle("顯示月營收趨勢", key=f"show_revenue_{symbol}")
+            with pe_control:
+                show_pe_river = st.toggle("顯示本益比河流圖", key=f"show_pe_river_{symbol}")
+
+            if show_revenue:
+                try:
+                    revenue_result = load_revenue_trend(symbol)
+                    period = revenue_result["latest_period"].strftime("%Y/%m")
+                    mom = revenue_result["mom_pct"]
+                    yoy = revenue_result["yoy_pct"]
+                    mom_text = "N/A" if mom is None else f"{mom:+.1f}%"
+                    yoy_text = "N/A" if yoy is None else f"{yoy:+.1f}%"
+                    mom_color = TEXT_MUTED if mom is None else ("#ef5350" if mom >= 0 else "#4caf50")
+                    yoy_color = TEXT_MUTED if yoy is None else ("#ef5350" if yoy >= 0 else "#4caf50")
+                    announcement = revenue_result["announcement_date"]
+                    announcement_text = (
+                        announcement.strftime("%Y-%m-%d") if pd.notna(announcement) else "未提供"
+                    )
+                    st.markdown(
+                        f"<div style='color:{ACCENT}; font-size:14px; margin-top:8px;'>月營收趨勢</div>"
+                        f"<div style='display:flex; gap:12px; margin:7px 0 4px;'>"
+                        f"<div style='flex:1; background:{GRID}55; border-radius:7px; padding:8px 12px;'>"
+                        f"<div style='color:{TEXT_MUTED}; font-size:11px;'>{period} 營收</div>"
+                        f"<div style='font-size:18px;'>{revenue_result['latest_revenue_100m']:,.1f} 億元</div></div>"
+                        f"<div style='flex:1; background:{GRID}55; border-radius:7px; padding:8px 12px;'>"
+                        f"<div style='color:{TEXT_MUTED}; font-size:11px;'>月增率 MoM</div>"
+                        f"<div style='color:{mom_color}; font-size:18px;'>{mom_text}</div></div>"
+                        f"<div style='flex:1; background:{GRID}55; border-radius:7px; padding:8px 12px;'>"
+                        f"<div style='color:{TEXT_MUTED}; font-size:11px;'>年增率 YoY</div>"
+                        f"<div style='color:{yoy_color}; font-size:18px;'>{yoy_text}</div></div></div>",
+                        unsafe_allow_html=True,
+                    )
+                    revenue_range = st.segmented_control(
+                        "營收趨勢範圍",
+                        options=["3個月", "6個月", "12個月"],
+                        default="12個月",
+                        key=f"revenue_range_{symbol}",
+                    )
+                    revenue_months = int((revenue_range or "12個月").replace("個月", ""))
+                    st.plotly_chart(
+                        render_revenue_trend(revenue_result, months=revenue_months),
+                        width="stretch",
+                        config={"displayModeBar": False},
+                    )
+                    st.caption(
+                        f"資料源：FinMind TaiwanStockMonthRevenue；實際營收月份 {period}，"
+                        f"資料建立／記錄日期 {announcement_text}。營收單位為新台幣億元。"
+                    )
+                except Exception as e:
+                    st.info(f"月營收趨勢目前抓不到：{e}")
+
             if show_pe_river:
                 try:
                     river = load_pe_river(symbol)
@@ -685,4 +792,4 @@ for t in ticker_data:
                 except Exception as e:
                     st.info(f"本益比河流圖目前不適用：{e}")
         else:
-            st.caption("本益比河流圖僅適用一般個股；指數與 ETF 不套用個股 EPS／PE 模型。")
+            st.caption("個股基本面與估值圖僅適用一般公司；指數與 ETF 不套用月營收／EPS／PE 模型。")
