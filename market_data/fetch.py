@@ -55,7 +55,7 @@ def latest_price(df: pd.DataFrame) -> float:
 
 def get_current_price(symbol: str, df: pd.DataFrame) -> float:
     """目前價格：優先用 TWSE MIS 準即時報價，查不到才 fallback 回歷史收盤價。"""
-    from data.live_price import fetch_live_prices
+    from market_data.live_price import fetch_live_prices
 
     try:
         live = fetch_live_prices([symbol]).get(symbol)

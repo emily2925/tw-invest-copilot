@@ -79,7 +79,7 @@ def front_high_signal(df: pd.DataFrame, current_price: float, window: int = 10) 
 
 if __name__ == "__main__":
     from config.watchlist import WATCHLIST
-    from data.fetch import fetch_history, get_current_price
+    from market_data.fetch import fetch_history, get_current_price
 
     for item in WATCHLIST:
         symbol, name = item["symbol"], item["name"]

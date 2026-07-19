@@ -9,7 +9,7 @@ from datetime import datetime
 
 # 保險起見明確把專案根目錄加進 sys.path——不加的話，Streamlit 重新執行腳本時
 # 有時候找不到同層的 config/、data/ 這些本地 package（曾經在瀏覽器實測時遇到
-# ModuleNotFoundError: No module named 'data.fetch'，本機單獨跑 python3 -m 不會重現）
+# ModuleNotFoundError: No module named 'market_data.fetch'，本機單獨跑 python3 -m 不會重現）
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import pandas as pd
@@ -30,10 +30,10 @@ try:
     from agent.daily_brief import build_signal_summary, generate_daily_brief
     from agent.spend_tracker import add_spend, load_total_spend
     from config.watchlist import WATCHLIST
-    from data.fetch import fetch_history, get_current_price
-    from data.indicators import add_bollinger_bands, add_moving_averages, front_high_signal, MA_WINDOWS
-    from data.macro import fetch_foreign_futures_position, fetch_sox, fetch_twd_usd, value_and_change
-    from data.overnight import fetch_overnight_intraday, get_overnight_sentiment
+    from market_data.fetch import fetch_history, get_current_price
+    from market_data.indicators import add_bollinger_bands, add_moving_averages, front_high_signal, MA_WINDOWS
+    from market_data.macro import fetch_foreign_futures_position, fetch_sox, fetch_twd_usd, value_and_change
+    from market_data.overnight import fetch_overnight_intraday, get_overnight_sentiment
 except ModuleNotFoundError as exc:
     # Streamlit Cloud 的預設錯誤頁會隱藏真正缺少的模組名稱，導致無法遠端診斷。
     # 只顯示 exc.name（不含路徑、環境變數或 traceback），不會洩漏 secrets。
