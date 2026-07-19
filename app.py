@@ -30,7 +30,7 @@ try:
     from agent.daily_brief import build_signal_summary, generate_daily_brief
     from agent.spend_tracker import add_spend, load_total_spend
     from config.watchlist import WATCHLIST
-    from market_data.fetch import fetch_history, get_current_price
+    from market_data.fetch import fetch_history, fetch_pe_history, get_current_price
     from market_data.indicators import (
         MA_WINDOWS,
         add_bollinger_bands,
@@ -40,6 +40,7 @@ try:
     )
     from market_data.macro import fetch_foreign_futures_position, fetch_sox, fetch_twd_usd, value_and_change
     from market_data.overnight import fetch_overnight_intraday, get_overnight_sentiment
+    from market_data.valuation import build_pe_river, is_pe_river_applicable
 except ModuleNotFoundError as exc:
     # Streamlit Cloud 的預設錯誤頁會隱藏真正缺少的模組名稱，導致無法遠端診斷。
     # 只顯示 exc.name（不含路徑、環境變數或 traceback），不會洩漏 secrets。
@@ -92,6 +93,14 @@ else:
 @st.cache_data(ttl=300)
 def load_history(symbol: str):
     return fetch_history(symbol)
+
+
+@st.cache_data(ttl=21600)
+def load_pe_river(symbol: str):
+    """需要時才抓近5年價格與 PE，避免首頁一次載入所有個股的長期估值資料。"""
+    price_history = fetch_history(symbol, lookback_days=1900)
+    pe_history = fetch_pe_history(symbol, lookback_days=1900)
+    return build_pe_river(price_history, pe_history)
 
 
 @st.cache_data(ttl=21600)  # 6小時：這幾個都要逐日查詢很慢，拉長快取效期
@@ -350,6 +359,58 @@ def render_intraday_line(df):
     return fig
 
 
+def render_pe_river(result: dict):
+    """本益比歷史分位河流：估值帶在下、正式收盤價在最上層。"""
+    df = result["data"]
+    percentiles = result["percentiles"]
+    band_specs = [
+        (20, "#4caf50", None),
+        (40, "#62b6a7", "rgba(76,175,80,0.10)"),
+        (60, "#f0b429", "rgba(240,180,41,0.10)"),
+        (80, "#e8935a", "rgba(232,147,90,0.12)"),
+    ]
+
+    fig = go.Figure()
+    for percentile, color, fill_color in band_specs:
+        fig.add_trace(
+            go.Scatter(
+                x=df.index,
+                y=df[f"PE_P{percentile}"],
+                name=f"P{percentile} · {percentiles[percentile]:.1f}x",
+                mode="lines",
+                line=dict(color=color, width=1),
+                fill="tonexty" if fill_color else None,
+                fillcolor=fill_color,
+                hovertemplate=f"P{percentile} 估值線 %{{y:,.2f}}<extra></extra>",
+            )
+        )
+    fig.add_trace(
+        go.Scatter(
+            x=df.index,
+            y=df["Close"],
+            name="收盤價",
+            mode="lines",
+            line=dict(color="#f2f0e9", width=2),
+            hovertemplate="收盤價 %{y:,.2f}<extra></extra>",
+        )
+    )
+    fig.update_layout(
+        height=340,
+        margin=dict(l=10, r=10, t=12, b=10),
+        legend=dict(
+            orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1,
+            font=dict(color=TEXT_MUTED, size=10),
+        ),
+        plot_bgcolor=CARD_BG,
+        paper_bgcolor=CARD_BG,
+        font=dict(color=TEXT_MUTED, family="monospace"),
+        hovermode="x unified",
+        xaxis=dict(showgrid=False, color=TEXT_MUTED),
+        yaxis=dict(gridcolor=GRID, color=TEXT_MUTED),
+    )
+    return fig
+
+
 st.markdown(
     f"<div style='color:{ACCENT}; font-size:16px; margin-bottom:8px;'>警示指標</div>",
     unsafe_allow_html=True,
@@ -597,3 +658,30 @@ for t in ticker_data:
             yaxis=dict(gridcolor=GRID, color=TEXT_MUTED),
         )
         st.plotly_chart(fig, width="stretch")
+
+        if is_pe_river_applicable(symbol):
+            show_pe_river = st.toggle("顯示本益比河流圖", key=f"show_pe_river_{symbol}")
+            if show_pe_river:
+                try:
+                    river = load_pe_river(symbol)
+                    latest_date = river["latest_date"].strftime("%Y-%m-%d")
+                    st.markdown(
+                        f"<div style='display:flex; gap:24px; align-items:baseline; margin-top:6px;'>"
+                        f"<span style='color:{ACCENT}; font-size:14px;'>本益比歷史分位河流</span>"
+                        f"<span style='font-size:13px;'>目前 PE {river['current_pe']:.1f}x</span>"
+                        f"<span style='color:{TEXT_MUTED}; font-size:12px;'>"
+                        f"近5年百分位 {river['current_percentile']:.0f}% · 資料截至 {latest_date}</span>"
+                        f"</div>",
+                        unsafe_allow_html=True,
+                    )
+                    st.plotly_chart(
+                        render_pe_river(river), width="stretch", config={"displayModeBar": False}
+                    )
+                    st.caption(
+                        "資料源：FinMind TaiwanStockPER。P20／P40／P60／P80 是此股票近5年正本益比的"
+                        "歷史分位數；估值線＝每日反推近四季 EPS × 各分位 PE，並非目標價。"
+                    )
+                except Exception as e:
+                    st.info(f"本益比河流圖目前不適用：{e}")
+        else:
+            st.caption("本益比河流圖僅適用一般個股；指數與 ETF 不套用個股 EPS／PE 模型。")
