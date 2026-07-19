@@ -16,6 +16,16 @@ import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
 
+# 部署到 Streamlit Cloud 時沒有本機的 .env，改把雲端 secrets 灌進環境變數，
+# 讓下面 data/、agent/ 模組既有的 os.environ.get(...) 在雲端也讀得到 key。
+# 必須在 import 那些模組「之前」做——data/fetch.py 在 import 當下就會讀 token 並登入。
+for _key in ("ANTHROPIC_API_KEY", "FINMIND_API_TOKEN"):
+    try:
+        if not os.environ.get(_key) and _key in st.secrets:
+            os.environ[_key] = str(st.secrets[_key])
+    except Exception:
+        pass
+
 from agent.daily_brief import build_signal_summary, generate_daily_brief
 from agent.spend_tracker import add_spend, load_total_spend
 from config.watchlist import WATCHLIST
@@ -106,10 +116,41 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
+# AI 按鈕的密碼保護：部署到公開網址後，任何人點這顆按鈕都是花「我的」API 額度，
+# 所以在 Streamlit secrets 設一組 AI_UNLOCK_PASSWORD 就會要求輸入密碼才能點。
+# 本機自己用時不設這個 secret，button 就照常開放（零摩擦）。
+def _ai_unlock_password() -> str:
+    try:
+        return st.secrets.get("AI_UNLOCK_PASSWORD", "")
+    except Exception:
+        return ""
+
+
+required_pw = _ai_unlock_password()
+ai_unlocked = True
+if required_pw and not st.session_state.get("ai_unlocked", False):
+    ai_unlocked = False
+
 brief_col, spend_col = st.columns([3, 1])
 
 with brief_col:
-    if st.button("🔄 產生今日重點"):
+    if required_pw and not ai_unlocked:
+        pw = st.text_input(
+            "🔒 AI 摘要需要密碼（圖表不用）", type="password", key="ai_pw_input",
+            placeholder="輸入密碼以解鎖今日重點",
+        )
+        if pw:
+            if pw == required_pw:
+                st.session_state.ai_unlocked = True
+                ai_unlocked = True
+                st.rerun()
+            else:
+                st.markdown(
+                    f"<div style='color:#e06c75; font-size:12px;'>密碼錯誤</div>",
+                    unsafe_allow_html=True,
+                )
+
+    if st.button("🔄 產生今日重點", disabled=not ai_unlocked):
         try:
             overnight_summary = load_overnight_summary()
             foreign_futures_series = load_macro_series("foreign_futures")
