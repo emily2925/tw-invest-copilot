@@ -16,6 +16,7 @@ import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
 
+from agent.daily_brief import build_signal_summary, generate_daily_brief
 from config.watchlist import WATCHLIST
 from data.fetch import fetch_history, get_current_price
 from data.indicators import add_bollinger_bands, add_moving_averages, front_high_signal, MA_WINDOWS
@@ -244,6 +245,8 @@ RANGE_OPTIONS = {"1個月": 21, "3個月": 63, "6個月": 126, "1年": 252, "全
 selected_range = st.segmented_control("time range", options=list(RANGE_OPTIONS.keys()), default="3個月", label_visibility="collapsed")
 selected_range = selected_range or "3個月"
 
+front_high_signals_for_brief = []  # 給 Hour 7 的今日重點摘要用
+
 for item in WATCHLIST:
     symbol, name = item["symbol"], item["name"]
 
@@ -255,6 +258,8 @@ for item in WATCHLIST:
     n = RANGE_OPTIONS[selected_range]
     display_df = df if n is None else df.tail(n)
     signal = front_high_signal(df, price)
+    if signal:
+        front_high_signals_for_brief.append({"name": name, "message": signal["message"]})
 
     # 判斷「前一收盤」：如果目前價格已經跟歷史最後一筆一樣（代表當下沒有更新的即時價，
     # 例如休市中），前一收盤要往前抓一天，不然漲跌會算成 0
@@ -364,3 +369,41 @@ for item in WATCHLIST:
             yaxis=dict(gridcolor=GRID, color=TEXT_MUTED),
         )
         st.plotly_chart(fig, width="stretch")
+
+
+# Hour 7：AI 今日重點摘要——把上面算好的訊號丟給 agent，生成一段自然語言摘要。
+# 這是這個週末唯一真正用到 agent framework（OpenAI Agents SDK + LiteLLM + Claude）的地方，
+# 其餘都是決定性的資料處理/規則判斷。
+
+
+@st.cache_data(ttl=1800)
+def load_daily_brief(signal_text: str) -> str:
+    return generate_daily_brief(signal_text)
+
+
+st.markdown(
+    f"<div style='color:{ACCENT}; font-size:16px; margin:24px 0 8px;'>今日重點（AI 摘要）</div>",
+    unsafe_allow_html=True,
+)
+try:
+    overnight_summary = load_overnight_summary()
+    foreign_futures_series = load_macro_series("foreign_futures")
+    twd_series = load_macro_series("twd")
+    sox_series = load_macro_series("sox")
+    foreign_futures_vc = value_and_change(foreign_futures_series)
+    sox_vc = value_and_change(sox_series)
+
+    signal_text = build_signal_summary(
+        overnight=overnight_summary,
+        foreign_futures_current=float(foreign_futures_series["Close"].iloc[-1]),
+        foreign_futures_change_pct=foreign_futures_vc["change_pct"],
+        twd_current=float(twd_series["Close"].iloc[-1]),
+        sox_current=float(sox_series["Close"].iloc[-1]),
+        sox_change_pct=sox_vc["change_pct"],
+        front_high_signals=front_high_signals_for_brief,
+    )
+    brief_text = load_daily_brief(signal_text)
+    with st.container(border=True):
+        st.markdown(f"<div style='line-height:1.7;'>{brief_text}</div>", unsafe_allow_html=True)
+except Exception as e:
+    st.markdown(f"<div style='color:{TEXT_MUTED}; font-size:13px;'>今日重點暫時生成不了（{e}）</div>", unsafe_allow_html=True)
