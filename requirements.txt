@@ -1,9 +1,13 @@
-FinMind
-pandas
-beautifulsoup4
-lxml
-streamlit
-plotly
-requests
-python-dotenv
-openai-agents[litellm]
+# 版本鎖定成本機 .venv（Python 3.11）實測可用的一組，讓 Streamlit Cloud 裝出一致的環境。
+# 不鎖版本的話，雲端會抓最新版（例如 pandas 3.0、Python 3.14 專用 wheel），
+# 反而裝不起來或執行時爆掉。搭配 Streamlit Cloud 的 Python 版本設成 3.11。
+FinMind==2.0.5
+pandas==2.3.3
+numpy==2.4.6
+beautifulsoup4==4.15.0
+lxml==4.9.4
+streamlit==1.59.2
+plotly==6.9.0
+requests==2.34.2
+python-dotenv==1.2.2
+openai-agents[litellm]==0.18.3
