@@ -10,4 +10,5 @@ streamlit==1.59.2
 plotly==6.9.0
 requests==2.34.2
 python-dotenv==1.2.2
+yfinance==1.5.1
 openai-agents[litellm]==0.18.3
