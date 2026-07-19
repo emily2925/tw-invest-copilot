@@ -30,7 +30,7 @@ try:
     from agent.daily_brief import build_signal_summary, generate_daily_brief
     from agent.spend_tracker import add_spend, load_total_spend
     from config.watchlist import WATCHLIST
-    from market_data.fetch import fetch_history, fetch_pe_history, get_current_price
+    from market_data.fetch import fetch_history, get_current_price
     from market_data.indicators import (
         MA_WINDOWS,
         add_bollinger_bands,
@@ -40,6 +40,7 @@ try:
     )
     from market_data.macro import fetch_foreign_futures_position, fetch_sox, fetch_twd_usd, value_and_change
     from market_data.overnight import fetch_overnight_intraday, get_overnight_sentiment
+    from market_data.pe_fetch import fetch_pe_history
     from market_data.valuation import build_pe_river, is_pe_river_applicable
 except ModuleNotFoundError as exc:
     # Streamlit Cloud 的預設錯誤頁會隱藏真正缺少的模組名稱，導致無法遠端診斷。
