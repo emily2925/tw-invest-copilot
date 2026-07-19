@@ -41,14 +41,14 @@ GRID = "#2a2a2a"
 TEXT_MUTED = "#8a8880"
 BUDGET_USD = 5.0  # AI 摘要功能的花費上限提示，之後隨時可以改
 
-st.set_page_config(page_title="台股投資 AI 工具", layout="wide")
+st.set_page_config(page_title="坤泥投資大賺錢", layout="wide")
 
 st.markdown(
     f"""
     <div style="display:flex; justify-content:space-between; align-items:baseline;
                 border-bottom:1px solid {GRID}; padding-bottom:12px; margin-bottom:20px;">
       <div>
-        <span style="color:{ACCENT}; font-size:22px;">台股投資 AI 工具</span>
+        <span style="color:{ACCENT}; font-size:22px;">坤泥投資大賺錢</span>
         <div style="color:{TEXT_MUTED}; font-size:13px;">tw-invest-copilot · v1</div>
       </div>
       <div style="color:{TEXT_MUTED}; font-size:13px;">
@@ -152,20 +152,38 @@ with brief_col:
 
     if st.button("🔄 產生今日重點", disabled=not ai_unlocked):
         try:
-            overnight_summary = load_overnight_summary()
-            foreign_futures_series = load_macro_series("foreign_futures")
-            twd_series = load_macro_series("twd")
-            sox_series = load_macro_series("sox")
-            foreign_futures_vc = value_and_change(foreign_futures_series)
-            sox_vc = value_and_change(sox_series)
+            # 每個資料源獨立容錯：某一項當下抓不到就傳 None，AI 會就「手上有的資料」
+            # 照樣產出摘要，不會因為缺一項（例如外資期貨暫時抓不到）就整段失敗。
+            def _safe(fn):
+                try:
+                    return fn()
+                except Exception:
+                    return None
+
+            def _last_close(series):
+                try:
+                    return float(series["Close"].iloc[-1])
+                except Exception:
+                    return None
+
+            def _change_pct(series):
+                try:
+                    return value_and_change(series)["change_pct"]
+                except Exception:
+                    return None
+
+            overnight_summary = _safe(load_overnight_summary)
+            foreign_futures_series = _safe(lambda: load_macro_series("foreign_futures"))
+            twd_series = _safe(lambda: load_macro_series("twd"))
+            sox_series = _safe(lambda: load_macro_series("sox"))
 
             signal_text = build_signal_summary(
                 overnight=overnight_summary,
-                foreign_futures_current=float(foreign_futures_series["Close"].iloc[-1]),
-                foreign_futures_change_pct=foreign_futures_vc["change_pct"],
-                twd_current=float(twd_series["Close"].iloc[-1]),
-                sox_current=float(sox_series["Close"].iloc[-1]),
-                sox_change_pct=sox_vc["change_pct"],
+                foreign_futures_current=_last_close(foreign_futures_series),
+                foreign_futures_change_pct=_change_pct(foreign_futures_series),
+                twd_current=_last_close(twd_series),
+                sox_current=_last_close(sox_series),
+                sox_change_pct=_change_pct(sox_series),
                 front_high_signals=front_high_signals_for_brief,
             )
             result = generate_daily_brief(signal_text)
