@@ -31,7 +31,8 @@ try:
     from agent.daily_brief import build_signal_summary, generate_daily_brief
     from agent.spend_tracker import add_spend, load_total_spend
     from config.watchlist import WATCHLIST
-    from market_data.earnings import prepare_eps_summary
+    from market_data.corporate_actions_fetch import fetch_share_basis_changes
+    from market_data.eps_adjustment import prepare_split_adjusted_eps_summary
     from market_data.eps_fetch import fetch_quarterly_eps
     from market_data.fundamental_fetch import fetch_monthly_revenue
     from market_data.fundamentals import is_company_fundamentals_applicable, prepare_revenue_trend
@@ -118,7 +119,9 @@ def load_revenue_trend(symbol: str):
 
 @st.cache_data(ttl=21600)
 def load_eps_summary(symbol: str):
-    return prepare_eps_summary(fetch_quarterly_eps(symbol, lookback_years=4))
+    eps = fetch_quarterly_eps(symbol, lookback_years=4)
+    basis_changes = fetch_share_basis_changes(symbol, lookback_years=5)
+    return prepare_split_adjusted_eps_summary(eps, basis_changes)
 
 
 @st.cache_data(ttl=21600)
@@ -823,6 +826,14 @@ for t in ticker_data:
                         f"EPS 資料源：FinMind TaiwanStockFinancialStatements，最新財報季度 {quarter}；"
                         f"PE 資料源：TaiwanStockPER，資料日期 {pe_date_text}。以上皆為已公告實際值。"
                     )
+                    for adjustment in eps_result["basis_adjustments"]:
+                        factor = float(adjustment["basis_factor"])
+                        action_date = pd.Timestamp(adjustment["date"]).strftime("%Y-%m-%d")
+                        ratio_text = f"÷ {1 / factor:g}" if factor < 1 else f"× {factor:g}"
+                        st.caption(
+                            f"↳ 已依 {action_date}「{adjustment['type']}」將事件日前 EPS {ratio_text}，"
+                            "統一成目前股數基準後再計算 TTM 與 YoY。"
+                        )
                 except Exception as e:
                     st.info(f"實際 EPS 摘要目前抓不到：{e}")
 
