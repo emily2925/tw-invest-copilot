@@ -555,8 +555,12 @@ for col, spec in zip(alert_cols[1:], ALERT_INDICATORS):
                 )
                 st.plotly_chart(render_sparkline(series, up), width="stretch", config={"displayModeBar": False})
                 if spec["note"]:
+                    note = spec["note"]
+                    if spec["key"] == "foreign_futures":
+                        latest_data_date = pd.Timestamp(series.index[-1]).strftime("%Y-%m-%d")
+                        note += f"；最新資料日 {latest_data_date}，採盤後增量快取"
                     st.markdown(
-                        f"<div style='color:{TEXT_MUTED}; font-size:10px;'>{spec['note']}</div>",
+                        f"<div style='color:{TEXT_MUTED}; font-size:10px;'>{note}</div>",
                         unsafe_allow_html=True,
                     )
             except Exception as e:
@@ -733,6 +737,19 @@ for t in ticker_data:
             yaxis=dict(gridcolor=GRID, color=TEXT_MUTED),
         )
         st.plotly_chart(fig, width="stretch")
+        for adjustment in df.attrs.get("share_basis_adjustments", []):
+            factor = float(adjustment["basis_factor"])
+            action_date = pd.Timestamp(adjustment["date"]).strftime("%Y-%m-%d")
+            if factor < 1:
+                price_action = f"÷ {1 / factor:g}"
+                volume_action = f"× {1 / factor:g}"
+            else:
+                price_action = f"× {factor:g}"
+                volume_action = f"÷ {factor:g}"
+            st.caption(
+                f"↳ {action_date}「{adjustment['type']}」：事件日前價格已 {price_action}、"
+                f"成交量已 {volume_action} 還原為目前單位基準；圖上的落差不計為漲跌。"
+            )
 
         if is_company_fundamentals_applicable(symbol):
             revenue_control, pe_control = st.columns(2)
@@ -857,6 +874,14 @@ for t in ticker_data:
                         "資料源：FinMind TaiwanStockPER。P20／P40／P60／P80 是此股票近5年正本益比的"
                         "歷史分位數；估值線＝每日反推近四季 EPS × 各分位 PE，並非目標價。"
                     )
+                    for adjustment in river["basis_adjustments"]:
+                        factor = float(adjustment["basis_factor"])
+                        action_date = pd.Timestamp(adjustment["date"]).strftime("%Y-%m-%d")
+                        price_action = f"÷ {1 / factor:g}" if factor < 1 else f"× {factor:g}"
+                        st.caption(
+                            f"↳ 河流圖已依 {action_date}「{adjustment['type']}」將事件日前價格 "
+                            f"{price_action}；官方 PE 比率本身維持不變，避免重複調整。"
+                        )
                 except Exception as e:
                     st.info(f"本益比河流圖目前不適用：{e}")
         else:

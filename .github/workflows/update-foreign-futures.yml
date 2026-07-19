@@ -1,0 +1,35 @@
+name: 更新外資期貨盤後資料
+
+on:
+  schedule:
+    # 台北時間每天 20:17；避開整點尖峰，並只寫入 D-1 以前已公告資料。
+    - cron: "17 12 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  update-cache:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - name: 安裝資料抓取套件
+        run: pip install pandas==2.3.3 requests==2.34.2 beautifulsoup4==4.15.0 lxml==4.9.4
+      - name: 增量更新至 D-1
+        run: python scripts/update_foreign_futures_cache.py
+      - name: 有新資料時提交
+        run: |
+          if git diff --quiet -- data_cache/foreign_futures.csv; then
+            echo "沒有新資料"
+            exit 0
+          fi
+          git config user.name emily2925
+          git config user.email 30750085+emily2925@users.noreply.github.com
+          git add data_cache/foreign_futures.csv
+          git commit -m "更新外資期貨盤後資料"
+          git push

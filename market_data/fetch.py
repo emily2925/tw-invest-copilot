@@ -31,7 +31,7 @@ def symbol_to_finmind_id(symbol: str) -> str:
 
 
 def fetch_history(symbol: str, lookback_days: int = 400) -> pd.DataFrame:
-    """抓單一標的的歷史 OHLC（原始成交價）。lookback_days 抓夠均線/前高偵測要用的天數。"""
+    """抓單一標的歷史 OHLC，並統一為目前股票分割後的價格基準。"""
     stock_id = symbol_to_finmind_id(symbol)
     start = (date.today() - timedelta(days=lookback_days)).isoformat()
     end = date.today().isoformat()
@@ -44,8 +44,15 @@ def fetch_history(symbol: str, lookback_days: int = 400) -> pd.DataFrame:
         columns={"open": "Open", "max": "High", "min": "Low", "close": "Close", "Trading_Volume": "Volume"}
     )
     df["Date"] = pd.to_datetime(df["date"])
-    df = df.set_index("Date").sort_index()
-    return df[["Open", "High", "Low", "Close", "Volume"]]
+    df = df.set_index("Date").sort_index()[["Open", "High", "Low", "Close", "Volume"]]
+
+    # 延遲 import 避免 corporate_actions_fetch 共用本模組的 FinMind loader 時循環匯入。
+    from market_data.corporate_actions_fetch import fetch_share_basis_changes
+    from market_data.price_adjustment import adjust_ohlcv_for_share_basis_changes
+
+    lookback_years = max(2, lookback_days // 365 + 2)
+    changes = fetch_share_basis_changes(symbol, lookback_years=lookback_years)
+    return adjust_ohlcv_for_share_basis_changes(df, changes)
 
 
 def latest_price(df: pd.DataFrame) -> float:

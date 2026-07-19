@@ -54,4 +54,5 @@ def build_pe_river(
         "latest_date": valid.index[-1],
         "coverage": coverage,
         "observations": len(valid),
+        "basis_adjustments": price_df.attrs.get("share_basis_adjustments", []),
     }
