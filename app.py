@@ -71,32 +71,18 @@ st.markdown(
 categories = list(dict.fromkeys(item["category"] for item in WATCHLIST))
 RANGE_OPTIONS = {"1個月": 21, "3個月": 63, "6個月": 126, "1年": 252, "全部": None}
 
-with st.container(border=True):
-    st.markdown(
-        f"<div style='color:{ACCENT}; font-size:14px; margin-bottom:4px;'>標的檢視</div>",
-        unsafe_allow_html=True,
-    )
-    category_col, range_col = st.columns([1, 2])
-    with category_col:
-        selected_category = st.selectbox(
-            "產業篩選",
-            options=["全部", *categories],
-        )
-    with range_col:
-        selected_range = st.segmented_control(
-            "時間範圍",
-            options=list(RANGE_OPTIONS.keys()),
-            default="3個月",
-        )
-        selected_range = selected_range or "3個月"
+# 控制元件會畫在警示指標下方；這裡先讀 session_state，讓篩選結果能供上方 AI 摘要使用。
+selected_category = st.session_state.get("category_filter", "全部")
+if selected_category not in ["全部", *categories]:
+    selected_category = "全部"
+selected_range = st.session_state.get("range_filter", "3個月")
+if selected_range not in RANGE_OPTIONS:
+    selected_range = "3個月"
 
 if selected_category == "全部":
     filtered_watchlist = WATCHLIST
 else:
     filtered_watchlist = [item for item in WATCHLIST if item["category"] == selected_category]
-st.caption(f"目前顯示 {len(filtered_watchlist)} 個標的")
-
-
 @st.cache_data(ttl=300)
 def load_history(symbol: str):
     return fetch_history(symbol)
@@ -434,6 +420,29 @@ for col, spec in zip(alert_cols[1:], ALERT_INDICATORS):
                     f"<div style='color:{TEXT_MUTED}; font-size:12px;'>{spec['label']}：暫時抓不到（{e}）</div>",
                     unsafe_allow_html=True,
                 )
+
+
+# 標的篩選緊接在警示指標之後，讓「市場警示 → 選擇標的 → K 線」形成連續閱讀順序。
+with st.container(border=True):
+    st.markdown(
+        f"<div style='color:{ACCENT}; font-size:14px; margin-bottom:4px;'>標的檢視</div>",
+        unsafe_allow_html=True,
+    )
+    category_col, range_col = st.columns([1, 2])
+    with category_col:
+        st.selectbox(
+            "產業篩選",
+            options=["全部", *categories],
+            key="category_filter",
+        )
+    with range_col:
+        st.segmented_control(
+            "時間範圍",
+            options=list(RANGE_OPTIONS.keys()),
+            default="3個月",
+            key="range_filter",
+        )
+    st.caption(f"目前顯示 {len(filtered_watchlist)} 個標的")
 
 
 # MA 線刻意避開紅/綠（留給K線漲跌用），深色底上要夠亮才看得清楚

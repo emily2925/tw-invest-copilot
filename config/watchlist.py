@@ -5,6 +5,7 @@
 """
 
 WATCHLIST = [
+    {"symbol": "^TWII", "name": "加權指數", "category": "大盤指數"},
     {"symbol": "00685L.TW", "name": "群益臺灣加權正2", "category": "穩定股"},
     {"symbol": "2330.TW", "name": "台積電", "category": "穩定股"},
     {"symbol": "2327.TW", "name": "國巨", "category": "被動元件"},
