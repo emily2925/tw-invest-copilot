@@ -4,12 +4,19 @@
 在 20-60 天這個範圍內跟 Fubon/Yahoo奇摩股市 兩個獨立來源對不起來（差距約 0.5-1%），
 換成 FinMind（台灣在地的開源金融資料 API，上市櫃資料都涵蓋，經驗證跟權威來源完全吻合）。
 """
+import os
 from datetime import date, timedelta
 
 import pandas as pd
+from dotenv import load_dotenv
 from FinMind.data import DataLoader
 
+load_dotenv()
+
 _loader = DataLoader()
+_token = os.environ.get("FINMIND_API_TOKEN")
+if _token:
+    _loader.login_by_token(api_token=_token)
 
 
 def symbol_to_finmind_id(symbol: str) -> str:
