@@ -28,7 +28,7 @@ for _key in ("ANTHROPIC_API_KEY", "FINMIND_API_TOKEN"):
         pass
 
 try:
-    from agent.daily_brief import build_signal_summary, generate_daily_brief
+    from agent.stock_analyst import build_stock_context, generate_stock_analysis
     from agent.spend_tracker import add_spend, load_total_spend
     from config.watchlist import WATCHLIST
     from market_data.corporate_actions_fetch import fetch_share_basis_changes
@@ -269,20 +269,8 @@ for item in filtered_watchlist:
         }
     )
 
-front_high_signals_for_brief = [
-    {"name": t["name"], "message": t["signal"]["message"]} for t in ticker_data if t["signal"]
-]
-
-
-# 今日重點（AI 摘要）——移到頁面最上面，且改成按鈕觸發，不要每次 refresh 都打一次 API。
-# 花費追蹤：st.session_state 只在瀏覽器分頁存在期間有效，重整伺服器就歸零，
-# 所以「總共花了多少」另外存進本機 .spend_tracker.json（見 agent/spend_tracker.py）。
-if "daily_brief" not in st.session_state:
-    st.session_state.daily_brief = None
-
-# AI 按鈕的密碼保護：部署到公開網址後，任何人點這顆按鈕都是花「我的」API 額度，
-# 所以在 Streamlit secrets 設一組 AI_UNLOCK_PASSWORD 就會要求輸入密碼才能點。
-# 本機自己用時不設這個 secret，button 就照常開放（零摩擦）。
+# AI 功能的密碼保護：部署到公開網址後，任何人點 AI 分析都是花「我的」API 額度，
+# 設了 AI_UNLOCK_PASSWORD secret 就要輸入一次密碼才能用（本機不設則零摩擦）。
 def _ai_unlock_password() -> str:
     try:
         return st.secrets.get("AI_UNLOCK_PASSWORD", "")
@@ -290,112 +278,9 @@ def _ai_unlock_password() -> str:
         return ""
 
 
-required_pw = _ai_unlock_password()
-ai_unlocked = True
-if required_pw and not st.session_state.get("ai_unlocked", False):
-    ai_unlocked = False
+_ai_required_pw = _ai_unlock_password()
+ai_unlocked = (not _ai_required_pw) or st.session_state.get("ai_unlocked", False)
 
-# AI 摘要獨立成完整卡片；花費只留右上角的精簡資訊，不再占一整欄與進度條。
-total_spend = load_total_spend()
-with st.container(border=True):
-    brief_header_col, cost_col = st.columns([4, 1])
-    with brief_header_col:
-        st.markdown(
-            f"<div style='color:{ACCENT}; font-size:16px;'>AI 今日重點</div>"
-            f"<div style='color:{TEXT_MUTED}; font-size:11px;'>依目前篩選標的與最新市場訊號產生</div>",
-            unsafe_allow_html=True,
-        )
-    with cost_col:
-        st.markdown(
-            f"<div style='text-align:right; color:{TEXT_MUTED}; font-size:11px;'>AI 花費</div>"
-            f"<div style='text-align:right; font-size:12px;'>${total_spend:.3f} / ${BUDGET_USD:.2f}</div>",
-            unsafe_allow_html=True,
-        )
-    brief_col = st.container()
-
-with brief_col:
-    if required_pw and not ai_unlocked:
-        pw = st.text_input(
-            "🔒 AI 摘要需要密碼（圖表不用）", type="password", key="ai_pw_input",
-            placeholder="輸入密碼以解鎖今日重點",
-        )
-        if pw:
-            if pw == required_pw:
-                st.session_state.ai_unlocked = True
-                ai_unlocked = True
-                st.rerun()
-            else:
-                st.markdown(
-                    f"<div style='color:#e06c75; font-size:12px;'>密碼錯誤</div>",
-                    unsafe_allow_html=True,
-                )
-
-    if st.button("🔄 產生今日重點", disabled=not ai_unlocked):
-        try:
-            # 每個資料源獨立容錯：某一項當下抓不到就傳 None，AI 會就「手上有的資料」
-            # 照樣產出摘要，不會因為缺一項（例如外資期貨暫時抓不到）就整段失敗。
-            def _safe(fn):
-                try:
-                    return fn()
-                except Exception:
-                    return None
-
-            def _last_close(series):
-                try:
-                    return float(series["Close"].iloc[-1])
-                except Exception:
-                    return None
-
-            def _change_pct(series):
-                try:
-                    return value_and_change(series)["change_pct"]
-                except Exception:
-                    return None
-
-            overnight_summary = _safe(load_overnight_summary)
-            foreign_futures_series = _safe(lambda: load_macro_series("foreign_futures"))
-            twd_series = _safe(lambda: load_macro_series("twd"))
-            sox_series = _safe(lambda: load_macro_series("sox"))
-
-            signal_text = build_signal_summary(
-                overnight=overnight_summary,
-                foreign_futures_current=_last_close(foreign_futures_series),
-                foreign_futures_change_pct=_change_pct(foreign_futures_series),
-                twd_current=_last_close(twd_series),
-                sox_current=_last_close(sox_series),
-                sox_change_pct=_change_pct(sox_series),
-                front_high_signals=front_high_signals_for_brief,
-            )
-            result = generate_daily_brief(signal_text)
-            add_spend(result["cost_usd"])
-            st.session_state.daily_brief = {
-                "text": result["text"],
-                "cost_usd": result["cost_usd"],
-                "generated_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                "error": None,
-            }
-        except Exception as e:
-            st.session_state.daily_brief = {"text": None, "cost_usd": None, "generated_at": None, "error": str(e)}
-
-    brief = st.session_state.daily_brief
-    if brief is None:
-        st.markdown(
-            f"<div style='color:{TEXT_MUTED}; font-size:13px;'>按上面的按鈕，根據最新資料產生今日重點摘要</div>",
-            unsafe_allow_html=True,
-        )
-    elif brief["error"]:
-        st.markdown(
-            f"<div style='color:{TEXT_MUTED}; font-size:13px;'>今日重點暫時生成不了（{brief['error']}）</div>",
-            unsafe_allow_html=True,
-        )
-    else:
-        with st.container(border=True):
-            st.markdown(f"<div style='line-height:1.7;'>{brief['text']}</div>", unsafe_allow_html=True)
-            st.markdown(
-                f"<div style='color:{TEXT_MUTED}; font-size:11px; margin-top:6px;'>"
-                f"產生時間 {brief['generated_at']} · 這次花費 ${brief['cost_usd']:.4f}</div>",
-                unsafe_allow_html=True,
-            )
 
 def day_over_day_change(df: pd.DataFrame) -> dict:
     """跟前一筆比（不是跟整段區間第一筆比）。夜盤用這個比較合理——
@@ -985,6 +870,116 @@ def render_technical_tab(symbol, df, display_df, latest, signal, ma_signals):
         )
 
 
+def render_ai_analysis(symbol, name, df, latest, signal, ma_signals, price, change_pct):
+    """個股 AI 綜合分析：只在按鈕點下時才呼叫 Opus（刷新頁面不會重跑），結果存 session_state。"""
+    state_key = f"ai_analysis_{symbol}"
+    total_spend = load_total_spend()
+
+    head_col, cost_col = st.columns([3, 1])
+    with head_col:
+        st.markdown(
+            f"<div style='color:{ACCENT}; font-size:15px; font-weight:600;'>🤖 AI 綜合分析</div>"
+            f"<div style='color:{TEXT_MUTED}; font-size:11px;'>Opus 仔細研讀技術／基本／籌碼三面向後給操作建議（按鈕才產生，刷新不會）</div>",
+            unsafe_allow_html=True,
+        )
+    with cost_col:
+        frac = min(total_spend / BUDGET_USD, 1.0) if BUDGET_USD else 0.0
+        st.markdown(
+            f"<div style='text-align:right; color:{TEXT_MUTED}; font-size:11px;'>AI 花費</div>"
+            f"<div style='text-align:right; font-size:12px;'>${total_spend:.3f} / ${BUDGET_USD:.0f}</div>",
+            unsafe_allow_html=True,
+        )
+        st.progress(frac)
+
+    if _ai_required_pw and not ai_unlocked:
+        pw = st.text_input("🔒 AI 分析需要密碼（圖表不用）", type="password", key="ai_pw_input",
+                           placeholder="輸入密碼以解鎖 AI 分析")
+        if pw == _ai_required_pw:
+            st.session_state.ai_unlocked = True
+            st.rerun()
+        elif pw:
+            st.markdown(f"<div style='color:#e06c75; font-size:12px;'>密碼錯誤</div>", unsafe_allow_html=True)
+
+    if st.button(f"🤖 分析 {name}", disabled=not ai_unlocked, key=f"ai_btn_{symbol}"):
+        with st.spinner("AI 正在研讀基本面／技術面／籌碼面…"):
+            try:
+                tech = {
+                    "ma": [f"MA{w} {latest[f'MA{w}']:.1f}" for w in MA_WINDOWS if pd.notna(latest[f"MA{w}"])],
+                    "signals": ([signal["message"]] if signal else []) + [s["message"] for s in ma_signals],
+                    "bollinger": (f"上軌 {latest['BB_upper']:.1f} / 下軌 {latest['BB_lower']:.1f}"
+                                  if pd.notna(latest.get("BB_upper")) else None),
+                }
+                fund = None
+                if is_company_fundamentals_applicable(symbol):
+                    fund = {}
+                    try:
+                        r = load_revenue_trend(symbol)
+                        fund["revenue"] = {
+                            "period": r["latest_period"].strftime("%Y/%m"),
+                            "latest_100m": r["latest_revenue_100m"],
+                            "mom": None if r["mom_pct"] is None else f"{r['mom_pct']:+.1f}%",
+                            "yoy": None if r["yoy_pct"] is None else f"{r['yoy_pct']:+.1f}%",
+                        }
+                    except Exception:
+                        pass
+                    try:
+                        e = load_eps_summary(symbol)
+                        fund["eps"] = {
+                            "quarter": f"{e['latest_date'].year} Q{(e['latest_date'].month - 1) // 3 + 1}",
+                            "latest": e["latest_eps"], "ttm": e["ttm_eps"],
+                            "yoy": None if e["quarterly_yoy_pct"] is None else f"{e['quarterly_yoy_pct']:+.1f}%",
+                        }
+                    except Exception:
+                        pass
+                    try:
+                        fund["pe"] = {"value": load_current_pe(symbol)["value"]}
+                    except Exception:
+                        pass
+                chips = None
+                if is_institutional_applicable(symbol):
+                    chips = {}
+                    try:
+                        n = load_institutional_net(symbol)
+                        chips["institutional"] = {
+                            "foreign": n["foreign_net"], "trust": n["trust_net"], "dealer": n["dealer_net"],
+                            "streak": n["foreign_streak"], "cum20": n["foreign_cum_20d"],
+                        }
+                    except Exception:
+                        pass
+                    try:
+                        m = load_margin_short(symbol)
+                        chips["margin"] = {"margin": m["margin_balance"], "short": m["short_balance"]}
+                    except Exception:
+                        pass
+                    try:
+                        chips["foreign_holding"] = load_foreign_shareholding(symbol)["foreign_ratio"]
+                    except Exception:
+                        pass
+
+                ctx = build_stock_context(name, symbol, price, change_pct, tech, fund, chips)
+                res = generate_stock_analysis(ctx)
+                add_spend(res["cost_usd"])
+                st.session_state[state_key] = {
+                    "text": res["text"], "cost": res["cost_usd"],
+                    "at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"), "error": None,
+                }
+            except Exception as e:
+                st.session_state[state_key] = {"text": None, "error": str(e)}
+        st.rerun()
+
+    result = st.session_state.get(state_key)
+    if result and result.get("error"):
+        st.info(f"AI 分析暫時產生不了：{result['error']}")
+    elif result and result.get("text"):
+        st.markdown(result["text"])
+        st.caption(
+            f"產生時間 {result['at']} · 這次花費 ${result['cost']:.4f} · "
+            "本分析由 AI 生成、僅供參考，不構成投資建議"
+        )
+    else:
+        st.caption("尚未產生。點上面的按鈕，讓 AI 讀完三面向最新資料後給你操作建議。")
+
+
 # 標的篩選緊接在警示指標之後，讓「市場警示 → 選擇標的 → K 線」形成連續閱讀順序。
 with st.container(border=True):
     st.markdown(
@@ -1081,6 +1076,9 @@ with st.container(border=True):
         f"<span style='color:{change_color}; font-size:16px;'>{arrow} {abs(change_pct):.2f}%</span>",
         unsafe_allow_html=True,
     )
+
+    # AI 綜合分析（按鈕觸發）放在三面向之前，讓使用者一選股就能一鍵拿到操作建議。
+    render_ai_analysis(symbol, name, df, latest, signal, ma_signals, price, change_pct)
 
     # 三列堆疊、每列滿版（圖表都 width="stretch" 撐滿整列）；順序：技術→基本→籌碼。
     def _face_header(title):
