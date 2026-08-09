@@ -105,6 +105,25 @@ st.markdown(
       [data-testid="stVerticalBlockBorderWrapper"] {{
         background-color: {CARD_BG}; border-color: {GRID} !important;
       }}
+      /* 一般按鈕（例：產生今日重點） */
+      .stButton > button {{
+        background-color: {CARD_BG} !important; color: {TEXT_LIGHT} !important;
+        border: 1px solid {GRID} !important;
+      }}
+      /* 下拉選單（產業篩選）收合框：整個控制項換成卡片底色＋主題文字色 */
+      [data-testid="stSelectbox"] div {{ background-color: {CARD_BG} !important; }}
+      [data-testid="stSelectbox"] * {{ color: {TEXT_LIGHT} !important; }}
+      [data-baseweb="popover"] ul {{ background-color: {CARD_BG} !important; }}
+      [data-baseweb="popover"] li {{ color: {TEXT_LIGHT} !important; }}
+      /* 分段控制（時間範圍／主題／面向）：未選取吃卡片底色，選取維持橘色高亮 */
+      [data-testid="stButtonGroup"] button[aria-checked="false"] {{
+        background-color: {CARD_BG} !important; color: {TEXT_LIGHT} !important;
+        border-color: {GRID} !important;
+      }}
+      [data-testid="stButtonGroup"] button[aria-checked="true"] {{
+        background-color: {ACCENT}33 !important; color: {ACCENT} !important;
+        border-color: {ACCENT} !important;
+      }}
     </style>
     """,
     unsafe_allow_html=True,
@@ -406,8 +425,8 @@ def render_sparkline(df, up: bool):
         margin=dict(l=0, r=0, t=4, b=4),
         showlegend=False,
         bargap=0.25,
-        plot_bgcolor=CARD_BG,
-        paper_bgcolor=CARD_BG,
+        plot_bgcolor="rgba(0,0,0,0)",
+        paper_bgcolor="rgba(0,0,0,0)",
         yaxis=dict(
             visible=False,
             range=[values.min() - pad, values.max() + pad],
@@ -443,8 +462,8 @@ def render_intraday_line(df):
         height=70,
         margin=dict(l=0, r=0, t=4, b=4),
         showlegend=False,
-        plot_bgcolor=CARD_BG,
-        paper_bgcolor=CARD_BG,
+        plot_bgcolor="rgba(0,0,0,0)",
+        paper_bgcolor="rgba(0,0,0,0)",
         yaxis=dict(visible=False, range=[values.min() - pad, values.max() + pad]),
         xaxis=dict(
             tickmode="array",
@@ -499,8 +518,8 @@ def render_pe_river(result: dict):
             orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1,
             font=dict(color=TEXT_MUTED, size=10),
         ),
-        plot_bgcolor=CARD_BG,
-        paper_bgcolor=CARD_BG,
+        plot_bgcolor="rgba(0,0,0,0)",
+        paper_bgcolor="rgba(0,0,0,0)",
         font=dict(color=TEXT_MUTED, family="monospace", size=12),
         hovermode="x unified",
         xaxis=dict(showgrid=False, color=TEXT_MUTED),
@@ -543,8 +562,8 @@ def render_revenue_trend(result: dict, months: int = 12):
             orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1,
             font=dict(color=TEXT_MUTED, size=10),
         ),
-        plot_bgcolor=CARD_BG,
-        paper_bgcolor=CARD_BG,
+        plot_bgcolor="rgba(0,0,0,0)",
+        paper_bgcolor="rgba(0,0,0,0)",
         font=dict(color=TEXT_MUTED, family="monospace", size=12),
         hovermode="x unified",
         xaxis=dict(type="category", showgrid=False, color=TEXT_MUTED),
@@ -605,7 +624,7 @@ def render_chips_tab(symbol: str):
         )
         fig.update_layout(
             height=220, margin=dict(l=10, r=10, t=10, b=10),
-            plot_bgcolor=CARD_BG, paper_bgcolor=CARD_BG,
+            plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
             font=dict(color=TEXT_MUTED, family="monospace", size=12),
             xaxis=dict(type="category", showgrid=False, color=TEXT_MUTED, nticks=10),
             yaxis=dict(gridcolor=GRID, color=TEXT_MUTED, title="外資淨買賣超（張）"),
@@ -645,7 +664,7 @@ def render_chips_tab(symbol: str):
             height=220, margin=dict(l=10, r=10, t=10, b=10),
             legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1,
                         font=dict(color=TEXT_MUTED, size=10)),
-            plot_bgcolor=CARD_BG, paper_bgcolor=CARD_BG,
+            plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
             font=dict(color=TEXT_MUTED, family="monospace", size=12),
             xaxis=dict(type="category", showgrid=False, color=TEXT_MUTED, nticks=10),
         )
@@ -680,7 +699,7 @@ def render_chips_tab(symbol: str):
         )
         fig.update_layout(
             height=200, margin=dict(l=10, r=10, t=10, b=10),
-            plot_bgcolor=CARD_BG, paper_bgcolor=CARD_BG,
+            plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
             font=dict(color=TEXT_MUTED, family="monospace", size=12),
             xaxis=dict(type="category", showgrid=False, color=TEXT_MUTED, nticks=8),
             yaxis=dict(gridcolor=GRID, color=TEXT_MUTED, title="%"),
@@ -942,7 +961,7 @@ def render_technical_tab(symbol, df, display_df, latest, signal, ma_signals):
         xaxis_rangeslider_visible=False,
         legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1,
                     font=dict(color=TEXT_MUTED, size=12)),
-        plot_bgcolor=CARD_BG, paper_bgcolor=CARD_BG,
+        plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
         font=dict(color=TEXT_LIGHT, family="monospace", size=12),
         hovermode="x unified",
         xaxis=dict(type="category", showgrid=False, color=TEXT_MUTED,
