@@ -1013,74 +1013,92 @@ MA_COLORS = {5: "#5b9bd5", 10: "#a89ef0", 20: "#f0b429", 60: "#c4c1b8"}
 
 # 「今日」沒有放進來：我們的歷史資料是日線（一天一根K棒），沒有分鐘級盤中資料，
 # 「今日」放進日K圖只會看到1根棒子沒有意義。之後若要做盤中圖是另一個功能。
-previous_category = None
-for t in ticker_data:
-    symbol, name, category, df, price, signal, ma_signals = (
-        t["symbol"], t["name"], t["category"], t["df"], t["price"], t["signal"], t["ma_signals"]
-    )
-
-    if selected_category == "全部" and category != previous_category:
-        st.markdown(
-            f"<div style='color:{ACCENT}; font-size:14px; margin:18px 0 6px;'>"
-            f"{category}</div>",
-            unsafe_allow_html=True,
-        )
-        previous_category = category
-
-    latest = df.iloc[-1]  # df 已經在前面的計算階段加好 MA/布林了
-    n = RANGE_OPTIONS[selected_range]
-    display_df = df if n is None else df.tail(n)
-
-    # 判斷「前一收盤」：如果目前價格已經跟歷史最後一筆一樣（代表當下沒有更新的即時價，
-    # 例如休市中），前一收盤要往前抓一天，不然漲跌會算成 0
+def _stock_change_pct(t) -> float:
+    """個股相對前一收盤的漲跌%（休市中即時價=最後一筆時，前收要往前抓一天）。"""
+    df, price = t["df"], t["price"]
     if abs(price - float(df["Close"].iloc[-1])) < 0.01:
         prev_close = float(df["Close"].iloc[-2])
     else:
         prev_close = float(df["Close"].iloc[-1])
-    change = price - prev_close
-    change_pct = change / prev_close * 100 if prev_close else 0.0
-    up = change >= 0
-    change_color = "#ef5350" if up else "#4caf50"  # 台股慣例：紅漲綠跌
-    arrow = "▲" if up else "▼"
+    return (price - prev_close) / prev_close * 100 if prev_close else 0.0
 
-    with st.container(border=True):
-        st.markdown(
-            f"<span style='color:{TEXT_MUTED}; font-size:15px;'>{name}</span> "
-            f"<span style='color:{TEXT_MUTED}; font-size:13px;'>{symbol}</span> "
-            f"<span style='color:{ACCENT}; font-size:11px; border:1px solid {ACCENT}66; "
-            f"border-radius:10px; padding:1px 7px;'>{category}</span>",
-            unsafe_allow_html=True,
-        )
-        st.markdown(
-            f"""
-            <div style="display:flex; align-items:baseline; gap:12px; margin:4px 0 8px;">
-              <span style="font-size:36px; font-weight:500;">{price:,.2f}</span>
-              <span style="color:{change_color}; font-size:18px;">
-                {arrow} {abs(change):,.2f} ({abs(change_pct):.2f}%)
-              </span>
-            </div>
-            """,
-            unsafe_allow_html=True,
-        )
 
-        # 大按鈕切換三面向；只 render 選中的那個，其餘不抓資料（避免 16 檔一次打爆 API）。
-        face = st.segmented_control(
-            "面向",
-            options=["技術面", "籌碼面", "基本面"],
-            default="技術面",
-            key=f"face_{symbol}",
-            label_visibility="collapsed",
-        )
-        if face == "籌碼面":
-            if is_institutional_applicable(symbol):
-                render_chips_tab(symbol)
-            else:
-                st.caption("指數沒有個股籌碼；三大法人／融資融券／外資持股為個股與 ETF 適用。")
-        elif face == "基本面":
-            if is_company_fundamentals_applicable(symbol):
-                render_fundamentals_tab(symbol)
-            else:
-                st.caption("個股基本面與估值圖僅適用一般公司；指數與 ETF 不套用月營收／EPS／PE 模型。")
-        else:  # 技術面（預設，含 face 被取消選取時的 None）
-            render_technical_tab(symbol, df, display_df, latest, signal, ma_signals)
+# ── 個股清單（可點選）──────────────────────────────────────────────
+# 一眼掃完所有標的；點一列 → 下方顯示該檔「技術面／籌碼面／基本面」三欄並排。
+list_rows = []
+for t in ticker_data:
+    sig_parts = []
+    if t["signal"]:
+        sig_parts.append(t["signal"]["message"])
+    sig_parts.extend(ms["message"] for ms in t["ma_signals"])
+    list_rows.append(
+        {
+            "名稱": t["name"],
+            "代號": t["symbol"],
+            "產業": t["category"],
+            "現價": t["price"],
+            "漲跌%": _stock_change_pct(t),
+            "技術訊號": " · ".join(sig_parts),
+        }
+    )
+list_df = pd.DataFrame(list_rows)
+
+st.caption("點選任一列，看該檔的技術面／籌碼面／基本面三欄並排詳情")
+list_event = st.dataframe(
+    list_df,
+    hide_index=True,
+    width="stretch",
+    on_select="rerun",
+    selection_mode="single-row",
+    column_config={
+        "現價": st.column_config.NumberColumn(format="%.2f"),
+        "漲跌%": st.column_config.NumberColumn(format="%+.2f%%"),
+        "技術訊號": st.column_config.TextColumn(width="large"),
+    },
+    key="stock_list",
+)
+selected_rows = list_event.selection["rows"] if list_event and list_event.selection else []
+selected_idx = selected_rows[0] if selected_rows else 0  # 預設看清單第一檔
+
+# ── 選中個股的三欄並排詳情 ──────────────────────────────────────────
+sel = ticker_data[selected_idx]
+symbol, name, category, df = sel["symbol"], sel["name"], sel["category"], sel["df"]
+price, signal, ma_signals = sel["price"], sel["signal"], sel["ma_signals"]
+latest = df.iloc[-1]
+n = RANGE_OPTIONS[selected_range]
+display_df = df if n is None else df.tail(n)
+change_pct = _stock_change_pct(sel)
+change_color = "#ef5350" if change_pct >= 0 else "#4caf50"  # 台股：紅漲綠跌
+arrow = "▲" if change_pct >= 0 else "▼"
+
+with st.container(border=True):
+    st.markdown(
+        f"<span style='color:{TEXT_LIGHT}; font-size:17px;'>{name}</span> "
+        f"<span style='color:{TEXT_MUTED}; font-size:13px;'>{symbol}</span> "
+        f"<span style='color:{ACCENT}; font-size:11px; border:1px solid {ACCENT}66; "
+        f"border-radius:10px; padding:1px 7px;'>{category}</span>"
+        f"<span style='font-size:30px; font-weight:500; margin-left:14px;'>{price:,.2f}</span> "
+        f"<span style='color:{change_color}; font-size:16px;'>{arrow} {abs(change_pct):.2f}%</span>",
+        unsafe_allow_html=True,
+    )
+
+    tech_col, chips_col, fund_col = st.columns(3)
+    with tech_col:
+        st.markdown(f"<div style='color:{ACCENT}; font-size:14px; margin-bottom:4px;'>技術面</div>",
+                    unsafe_allow_html=True)
+        render_technical_tab(symbol, df, display_df, latest, signal, ma_signals)
+    with chips_col:
+        st.markdown(f"<div style='color:{ACCENT}; font-size:14px; margin-bottom:4px;'>籌碼面</div>",
+                    unsafe_allow_html=True)
+        if is_institutional_applicable(symbol):
+            render_chips_tab(symbol)
+        else:
+            st.caption("指數沒有個股籌碼；三大法人／融資融券／外資持股為個股與 ETF 適用。")
+    with fund_col:
+        st.markdown(f"<div style='color:{ACCENT}; font-size:14px; margin-bottom:4px;'>基本面</div>",
+                    unsafe_allow_html=True)
+        if is_company_fundamentals_applicable(symbol):
+            render_fundamentals_tab(symbol)
+        else:
+            st.caption("個股基本面與估值圖僅適用一般公司；指數與 ETF 不套用月營收／EPS／PE 模型。")
 
