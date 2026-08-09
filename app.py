@@ -76,8 +76,8 @@ st.set_page_config(page_title="台股投資雷達", layout="wide")
 PALETTES = {
     "暗色": {"ACCENT": "#e8935a", "BG": "#0d0d0d", "CARD_BG": "#161616",
              "GRID": "#2a2a2a", "TEXT_MUTED": "#8a8880", "TEXT_LIGHT": "#e8e6e0"},
-    "亮色": {"ACCENT": "#c66a2e", "BG": "#f5f3ee", "CARD_BG": "#ffffff",
-             "GRID": "#e0dbd0", "TEXT_MUTED": "#6b6658", "TEXT_LIGHT": "#2a2721"},
+    "亮色": {"ACCENT": "#c0621f", "BG": "#ece7dc", "CARD_BG": "#ffffff",
+             "GRID": "#c9c0ad", "TEXT_MUTED": "#585245", "TEXT_LIGHT": "#26231d"},
 }
 theme_name = st.session_state.get("theme_choice", "暗色")
 _pal = PALETTES.get(theme_name, PALETTES["暗色"])
@@ -92,7 +92,7 @@ TEXT_LIGHT = _pal["TEXT_LIGHT"]
 st.markdown(
     f"""
     <style>
-      .stApp, [data-testid="stAppViewContainer"], [data-testid="stMain"],
+      html, body, .stApp, [data-testid="stAppViewContainer"], [data-testid="stMain"],
       [data-testid="stHeader"] {{ background-color: {BG} !important; }}
       [data-testid="stAppViewContainer"], .stApp, [data-testid="stMarkdownContainer"],
       .stMarkdown, p, span, label, h1, h2, h3, [data-testid="stWidgetLabel"] p {{
@@ -101,9 +101,10 @@ st.markdown(
       [data-testid="stCaptionContainer"], [data-testid="stCaptionContainer"] * {{
         color: {TEXT_MUTED} !important;
       }}
-      /* st.container(border=True) 卡片底色與邊框 */
+      /* st.container(border=True) 卡片底色與明顯邊框 */
       [data-testid="stVerticalBlockBorderWrapper"] {{
-        background-color: {CARD_BG}; border-color: {GRID} !important;
+        background-color: {CARD_BG} !important;
+        border: 1px solid {GRID} !important;
       }}
       /* 一般按鈕（例：產生今日重點） */
       .stButton > button {{
@@ -113,8 +114,10 @@ st.markdown(
       /* 下拉選單（產業篩選）收合框：整個控制項換成卡片底色＋主題文字色 */
       [data-testid="stSelectbox"] div {{ background-color: {CARD_BG} !important; }}
       [data-testid="stSelectbox"] * {{ color: {TEXT_LIGHT} !important; }}
-      [data-baseweb="popover"] ul {{ background-color: {CARD_BG} !important; }}
-      [data-baseweb="popover"] li {{ color: {TEXT_LIGHT} !important; }}
+      /* 下拉展開的選項清單（實際 testid 是 stSelectboxVirtualDropdown，畫在 body portal） */
+      [data-testid="stSelectboxVirtualDropdown"] {{ background-color: {CARD_BG} !important; }}
+      [data-testid="stSelectboxVirtualDropdown"] * {{ color: {TEXT_LIGHT} !important; }}
+      [data-testid="stSelectboxVirtualDropdown"] li:hover {{ background-color: {GRID} !important; }}
       /* 分段控制（時間範圍／主題／面向）：未選取吃卡片底色，選取維持橘色高亮 */
       [data-testid="stButtonGroup"] button[aria-checked="false"] {{
         background-color: {CARD_BG} !important; color: {TEXT_LIGHT} !important;
