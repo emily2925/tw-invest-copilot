@@ -36,6 +36,17 @@ try:
     from market_data.eps_fetch import fetch_quarterly_eps
     from market_data.fundamental_fetch import fetch_monthly_revenue
     from market_data.fundamentals import is_company_fundamentals_applicable, prepare_revenue_trend
+    from market_data.institutional_fetch import (
+        fetch_foreign_shareholding,
+        fetch_institutional_investors,
+        fetch_margin_short,
+    )
+    from market_data.institutional import (
+        is_institutional_applicable,
+        prepare_foreign_shareholding,
+        prepare_institutional_net,
+        prepare_margin_short,
+    )
     from market_data.fetch import fetch_history, get_current_price
     from market_data.indicators import (
         MA_WINDOWS,
@@ -61,6 +72,7 @@ BG = "#0d0d0d"
 CARD_BG = "#161616"
 GRID = "#2a2a2a"
 TEXT_MUTED = "#8a8880"
+TEXT_LIGHT = "#e8e6e0"
 BUDGET_USD = 5.0  # AI 摘要功能的花費上限提示，之後隨時可以改
 
 st.set_page_config(page_title="坤泥投資大賺錢", layout="wide")
@@ -131,6 +143,21 @@ def load_current_pe(symbol: str):
     if valid.empty:
         raise ValueError("最近半年沒有正本益比資料")
     return {"value": float(valid["PER"].iloc[-1]), "date": valid.index[-1]}
+
+
+@st.cache_data(ttl=21600)  # 籌碼是盤後 D-1，一天只更新一次，快取拉長到 6 小時
+def load_institutional_net(symbol: str):
+    return prepare_institutional_net(fetch_institutional_investors(symbol))
+
+
+@st.cache_data(ttl=21600)
+def load_margin_short(symbol: str):
+    return prepare_margin_short(fetch_margin_short(symbol))
+
+
+@st.cache_data(ttl=21600)
+def load_foreign_shareholding(symbol: str):
+    return prepare_foreign_shareholding(fetch_foreign_shareholding(symbol))
 
 
 @st.cache_data(ttl=21600)  # 6小時：這幾個都要逐日查詢很慢，拉長快取效期
@@ -486,6 +513,252 @@ def render_revenue_trend(result: dict, months: int = 12):
     return fig
 
 
+def _metric_cards(items: list[tuple]) -> str:
+    """把 (標題, 值 HTML, 值顏色) 串成一排等寬卡片的 HTML。"""
+    cells = "".join(
+        f"<div style='flex:1; min-width:120px; background:{GRID}55; border-radius:7px; padding:8px 12px;'>"
+        f"<div style='color:{TEXT_MUTED}; font-size:11px;'>{title}</div>"
+        f"<div style='color:{color}; font-size:18px;'>{value}</div></div>"
+        for title, value, color in items
+    )
+    return f"<div style='display:flex; gap:12px; flex-wrap:wrap; margin:7px 0 4px;'>{cells}</div>"
+
+
+def render_chips_tab(symbol: str):
+    """籌碼面：三大法人買賣超、融資融券、外資持股比率（皆為盤後 D-1 資料）。"""
+
+    def net_color(v):
+        return "#ef5350" if v >= 0 else "#4caf50"  # 台股：買超紅、賣超綠
+
+    # --- 三大法人買賣超 ---
+    try:
+        net = load_institutional_net(symbol)
+        d = net["latest_date"].strftime("%Y-%m-%d")
+        st.markdown(
+            f"<div style='color:{ACCENT}; font-size:14px;'>三大法人買賣超（張）</div>"
+            + _metric_cards([
+                ("外資", f"{net['foreign_net']:+,.0f}", net_color(net["foreign_net"])),
+                ("投信", f"{net['trust_net']:+,.0f}", net_color(net["trust_net"])),
+                ("自營商", f"{net['dealer_net']:+,.0f}", net_color(net["dealer_net"])),
+            ]),
+            unsafe_allow_html=True,
+        )
+        streak = net["foreign_streak"]
+        if streak["direction"]:
+            dir_text = "買超" if streak["direction"] == "buy" else "賣超"
+            dir_color = net_color(1 if streak["direction"] == "buy" else -1)
+            st.markdown(
+                f"<div style='background:{dir_color}18; color:{dir_color}; border:1px solid {dir_color}55; "
+                f"border-radius:6px; padding:5px 10px; font-size:12px; display:inline-block; margin:2px 0 8px;'>"
+                f"外資連 {streak['days']} 日{dir_text} · 近20日累計 {net['foreign_cum_20d']:+,.0f} 張</div>",
+                unsafe_allow_html=True,
+            )
+        data = net["data"]
+        labels = data.index.strftime("%m/%d")
+        bar_colors = [net_color(v) for v in data["foreign"]]
+        fig = go.Figure(
+            go.Bar(
+                x=labels, y=data["foreign"], marker_color=bar_colors,
+                hovertemplate="%{x}<br>外資 %{y:+,.0f} 張<extra></extra>",
+            )
+        )
+        fig.update_layout(
+            height=220, margin=dict(l=10, r=10, t=10, b=10),
+            plot_bgcolor=CARD_BG, paper_bgcolor=CARD_BG,
+            font=dict(color=TEXT_MUTED, family="monospace"),
+            xaxis=dict(type="category", showgrid=False, color=TEXT_MUTED, nticks=10),
+            yaxis=dict(gridcolor=GRID, color=TEXT_MUTED, title="外資淨買賣超（張）"),
+        )
+        st.plotly_chart(fig, width="stretch", config={"displayModeBar": False})
+        st.caption(
+            f"資料源：FinMind TaiwanStockInstitutionalInvestorsBuySell，資料截至 {d}。"
+            "正值買超、負值賣超；1 張＝1000 股。"
+        )
+    except Exception as e:
+        st.info(f"三大法人買賣超目前抓不到：{e}")
+
+    # --- 融資融券 ---
+    try:
+        ms = load_margin_short(symbol)
+        d = ms["latest_date"].strftime("%Y-%m-%d")
+        margin_chg = "" if ms["margin_change"] is None else f"（日變 {ms['margin_change']:+,.0f}）"
+        short_chg = "" if ms["short_change"] is None else f"（日變 {ms['short_change']:+,.0f}）"
+        st.markdown(
+            f"<div style='color:{ACCENT}; font-size:14px; margin-top:12px;'>融資融券餘額（張）</div>"
+            + _metric_cards([
+                ("融資餘額", f"{ms['margin_balance']:,.0f} {margin_chg}", TEXT_LIGHT),
+                ("融券餘額", f"{ms['short_balance']:,.0f} {short_chg}", TEXT_LIGHT),
+            ]),
+            unsafe_allow_html=True,
+        )
+        md = ms["data"]
+        mlabels = md.index.strftime("%m/%d")
+        fig = make_subplots(specs=[[{"secondary_y": True}]])
+        fig.add_trace(
+            go.Scatter(x=mlabels, y=md["margin_balance"], name="融資餘額",
+                       line=dict(color="#e8935a", width=2)), secondary_y=False)
+        fig.add_trace(
+            go.Scatter(x=mlabels, y=md["short_balance"], name="融券餘額",
+                       line=dict(color="#6ea6c9", width=2)), secondary_y=True)
+        fig.update_layout(
+            height=220, margin=dict(l=10, r=10, t=10, b=10),
+            legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1,
+                        font=dict(color=TEXT_MUTED, size=10)),
+            plot_bgcolor=CARD_BG, paper_bgcolor=CARD_BG,
+            font=dict(color=TEXT_MUTED, family="monospace"),
+            xaxis=dict(type="category", showgrid=False, color=TEXT_MUTED, nticks=10),
+        )
+        fig.update_yaxes(title_text="融資", gridcolor=GRID, color="#e8935a", secondary_y=False)
+        fig.update_yaxes(title_text="融券", showgrid=False, color="#6ea6c9", secondary_y=True)
+        st.plotly_chart(fig, width="stretch", config={"displayModeBar": False})
+        st.caption(
+            f"資料源：FinMind TaiwanStockMarginPurchaseShortSale，資料截至 {d}。"
+            "融資餘額升＝散戶追多、融券餘額升＝空方增加。"
+        )
+    except Exception as e:
+        st.info(f"融資融券目前抓不到：{e}")
+
+    # --- 外資持股比率 ---
+    try:
+        fh = load_foreign_shareholding(symbol)
+        d = fh["latest_date"].strftime("%Y-%m-%d")
+        change_text = "" if fh["ratio_change"] is None else f"（區間 {fh['ratio_change']:+.2f}%）"
+        st.markdown(
+            f"<div style='color:{ACCENT}; font-size:14px; margin-top:12px;'>外資持股比率</div>"
+            + _metric_cards([
+                ("外資持股", f"{fh['foreign_ratio']:.2f}% {change_text}", TEXT_LIGHT),
+            ]),
+            unsafe_allow_html=True,
+        )
+        hd = fh["data"]
+        hlabels = hd.index.strftime("%m/%d")
+        fig = go.Figure(
+            go.Scatter(x=hlabels, y=hd["foreign_ratio"], mode="lines",
+                       line=dict(color="#e8935a", width=2),
+                       hovertemplate="%{x}<br>外資持股 %{y:.2f}%<extra></extra>")
+        )
+        fig.update_layout(
+            height=200, margin=dict(l=10, r=10, t=10, b=10),
+            plot_bgcolor=CARD_BG, paper_bgcolor=CARD_BG,
+            font=dict(color=TEXT_MUTED, family="monospace"),
+            xaxis=dict(type="category", showgrid=False, color=TEXT_MUTED, nticks=8),
+            yaxis=dict(gridcolor=GRID, color=TEXT_MUTED, title="%"),
+        )
+        st.plotly_chart(fig, width="stretch", config={"displayModeBar": False})
+        st.caption(
+            f"資料源：FinMind TaiwanStockShareholding，資料截至 {d}。外資總持股占已發行股數比例。"
+        )
+    except Exception as e:
+        st.info(f"外資持股比率目前抓不到：{e}")
+
+
+def render_fundamentals_tab(symbol: str):
+    """基本面：月營收趨勢、實際 EPS 與估值、本益比河流圖（河流圖較重，放在子開關後）。"""
+    try:
+        revenue_result = load_revenue_trend(symbol)
+        period = revenue_result["latest_period"].strftime("%Y/%m")
+        mom = revenue_result["mom_pct"]
+        yoy = revenue_result["yoy_pct"]
+        mom_text = "N/A" if mom is None else f"{mom:+.1f}%"
+        yoy_text = "N/A" if yoy is None else f"{yoy:+.1f}%"
+        mom_color = TEXT_MUTED if mom is None else ("#ef5350" if mom >= 0 else "#4caf50")
+        yoy_color = TEXT_MUTED if yoy is None else ("#ef5350" if yoy >= 0 else "#4caf50")
+        announcement = revenue_result["announcement_date"]
+        announcement_text = announcement.strftime("%Y-%m-%d") if pd.notna(announcement) else "未提供"
+        st.markdown(
+            f"<div style='color:{ACCENT}; font-size:14px;'>月營收趨勢</div>"
+            + _metric_cards([
+                (f"{period} 營收", f"{revenue_result['latest_revenue_100m']:,.1f} 億元", TEXT_LIGHT),
+                ("月增率 MoM", mom_text, mom_color),
+                ("年增率 YoY", yoy_text, yoy_color),
+            ]),
+            unsafe_allow_html=True,
+        )
+        revenue_range = st.segmented_control(
+            "營收趨勢範圍", options=["3個月", "6個月", "12個月"],
+            default="12個月", key=f"revenue_range_{symbol}",
+        )
+        revenue_months = int((revenue_range or "12個月").replace("個月", ""))
+        st.plotly_chart(
+            render_revenue_trend(revenue_result, months=revenue_months),
+            width="stretch", config={"displayModeBar": False},
+        )
+        st.caption(
+            f"資料源：FinMind TaiwanStockMonthRevenue；實際營收月份 {period}，"
+            f"資料建立／記錄日期 {announcement_text}。營收單位為新台幣億元。"
+        )
+    except Exception as e:
+        st.info(f"月營收趨勢目前抓不到：{e}")
+
+    try:
+        eps_result = load_eps_summary(symbol)
+        eps_date = eps_result["latest_date"]
+        quarter = f"{eps_date.year} Q{(eps_date.month - 1) // 3 + 1}"
+        eps_yoy = eps_result["quarterly_yoy_pct"]
+        eps_yoy_text = "N/A" if eps_yoy is None else f"{eps_yoy:+.1f}%"
+        eps_yoy_color = TEXT_MUTED if eps_yoy is None else ("#ef5350" if eps_yoy >= 0 else "#4caf50")
+        try:
+            current_pe = load_current_pe(symbol)
+            pe_text = f"{current_pe['value']:.1f}x"
+            pe_date_text = current_pe["date"].strftime("%Y-%m-%d")
+        except Exception:
+            pe_text = "N/A"
+            pe_date_text = "無正 PE 資料"
+        st.markdown(
+            f"<div style='color:{ACCENT}; font-size:14px; margin-top:12px;'>實際獲利與估值</div>"
+            + _metric_cards([
+                (f"{quarter} 單季 EPS", f"{eps_result['latest_eps']:.2f} 元", TEXT_LIGHT),
+                ("近四季實際 EPS", f"{eps_result['ttm_eps']:.2f} 元", TEXT_LIGHT),
+                ("單季 EPS YoY", eps_yoy_text, eps_yoy_color),
+                ("目前官方 PE", pe_text, TEXT_LIGHT),
+            ]),
+            unsafe_allow_html=True,
+        )
+        st.caption(
+            f"EPS 資料源：FinMind TaiwanStockFinancialStatements，最新財報季度 {quarter}；"
+            f"PE 資料源：TaiwanStockPER，資料日期 {pe_date_text}。以上皆為已公告實際值。"
+        )
+        for adjustment in eps_result["basis_adjustments"]:
+            factor = float(adjustment["basis_factor"])
+            action_date = pd.Timestamp(adjustment["date"]).strftime("%Y-%m-%d")
+            ratio_text = f"÷ {1 / factor:g}" if factor < 1 else f"× {factor:g}"
+            st.caption(
+                f"↳ 已依 {action_date}「{adjustment['type']}」將事件日前 EPS {ratio_text}，"
+                "統一成目前股數基準後再計算 TTM 與 YoY。"
+            )
+    except Exception as e:
+        st.info(f"實際 EPS 摘要目前抓不到：{e}")
+
+    if st.toggle("顯示本益比河流圖", key=f"show_pe_river_{symbol}"):
+        try:
+            river = load_pe_river(symbol)
+            latest_date = river["latest_date"].strftime("%Y-%m-%d")
+            st.markdown(
+                f"<div style='display:flex; gap:24px; align-items:baseline; margin-top:6px;'>"
+                f"<span style='color:{ACCENT}; font-size:14px;'>本益比歷史分位河流</span>"
+                f"<span style='font-size:13px;'>目前 PE {river['current_pe']:.1f}x</span>"
+                f"<span style='color:{TEXT_MUTED}; font-size:12px;'>"
+                f"近5年百分位 {river['current_percentile']:.0f}% · 資料截至 {latest_date}</span>"
+                f"</div>",
+                unsafe_allow_html=True,
+            )
+            st.plotly_chart(render_pe_river(river), width="stretch", config={"displayModeBar": False})
+            st.caption(
+                "資料源：FinMind TaiwanStockPER。P20／P40／P60／P80 是此股票近5年正本益比的"
+                "歷史分位數；估值線＝每日反推近四季 EPS × 各分位 PE，並非目標價。"
+            )
+            for adjustment in river["basis_adjustments"]:
+                factor = float(adjustment["basis_factor"])
+                action_date = pd.Timestamp(adjustment["date"]).strftime("%Y-%m-%d")
+                price_action = f"÷ {1 / factor:g}" if factor < 1 else f"× {factor:g}"
+                st.caption(
+                    f"↳ 河流圖已依 {action_date}「{adjustment['type']}」將事件日前價格 "
+                    f"{price_action}；官方 PE 比率本身維持不變，避免重複調整。"
+                )
+        except Exception as e:
+            st.info(f"本益比河流圖目前不適用：{e}")
+
+
 st.markdown(
     f"<div style='color:{ACCENT}; font-size:16px; margin-bottom:8px;'>警示指標</div>",
     unsafe_allow_html=True,
@@ -751,138 +1024,17 @@ for t in ticker_data:
                 f"成交量已 {volume_action} 還原為目前單位基準；圖上的落差不計為漲跌。"
             )
 
-        if is_company_fundamentals_applicable(symbol):
-            revenue_control, pe_control = st.columns(2)
-            with revenue_control:
-                show_fundamentals = st.toggle("顯示基本面摘要", key=f"show_fundamentals_{symbol}")
-            with pe_control:
-                show_pe_river = st.toggle("顯示本益比河流圖", key=f"show_pe_river_{symbol}")
+        detail_open = st.toggle("＋ 展開 籌碼面 ／ 基本面 詳情", key=f"show_detail_{symbol}")
+        if detail_open:
+            chips_tab, fund_tab = st.tabs(["籌碼面", "基本面"])
+            with chips_tab:
+                if is_institutional_applicable(symbol):
+                    render_chips_tab(symbol)
+                else:
+                    st.caption("指數沒有個股籌碼；三大法人／融資融券／外資持股為個股與 ETF 適用。")
+            with fund_tab:
+                if is_company_fundamentals_applicable(symbol):
+                    render_fundamentals_tab(symbol)
+                else:
+                    st.caption("個股基本面與估值圖僅適用一般公司；指數與 ETF 不套用月營收／EPS／PE 模型。")
 
-            if show_fundamentals:
-                try:
-                    revenue_result = load_revenue_trend(symbol)
-                    period = revenue_result["latest_period"].strftime("%Y/%m")
-                    mom = revenue_result["mom_pct"]
-                    yoy = revenue_result["yoy_pct"]
-                    mom_text = "N/A" if mom is None else f"{mom:+.1f}%"
-                    yoy_text = "N/A" if yoy is None else f"{yoy:+.1f}%"
-                    mom_color = TEXT_MUTED if mom is None else ("#ef5350" if mom >= 0 else "#4caf50")
-                    yoy_color = TEXT_MUTED if yoy is None else ("#ef5350" if yoy >= 0 else "#4caf50")
-                    announcement = revenue_result["announcement_date"]
-                    announcement_text = (
-                        announcement.strftime("%Y-%m-%d") if pd.notna(announcement) else "未提供"
-                    )
-                    st.markdown(
-                        f"<div style='color:{ACCENT}; font-size:14px; margin-top:8px;'>月營收趨勢</div>"
-                        f"<div style='display:flex; gap:12px; margin:7px 0 4px;'>"
-                        f"<div style='flex:1; background:{GRID}55; border-radius:7px; padding:8px 12px;'>"
-                        f"<div style='color:{TEXT_MUTED}; font-size:11px;'>{period} 營收</div>"
-                        f"<div style='font-size:18px;'>{revenue_result['latest_revenue_100m']:,.1f} 億元</div></div>"
-                        f"<div style='flex:1; background:{GRID}55; border-radius:7px; padding:8px 12px;'>"
-                        f"<div style='color:{TEXT_MUTED}; font-size:11px;'>月增率 MoM</div>"
-                        f"<div style='color:{mom_color}; font-size:18px;'>{mom_text}</div></div>"
-                        f"<div style='flex:1; background:{GRID}55; border-radius:7px; padding:8px 12px;'>"
-                        f"<div style='color:{TEXT_MUTED}; font-size:11px;'>年增率 YoY</div>"
-                        f"<div style='color:{yoy_color}; font-size:18px;'>{yoy_text}</div></div></div>",
-                        unsafe_allow_html=True,
-                    )
-                    revenue_range = st.segmented_control(
-                        "營收趨勢範圍",
-                        options=["3個月", "6個月", "12個月"],
-                        default="12個月",
-                        key=f"revenue_range_{symbol}",
-                    )
-                    revenue_months = int((revenue_range or "12個月").replace("個月", ""))
-                    st.plotly_chart(
-                        render_revenue_trend(revenue_result, months=revenue_months),
-                        width="stretch",
-                        config={"displayModeBar": False},
-                    )
-                    st.caption(
-                        f"資料源：FinMind TaiwanStockMonthRevenue；實際營收月份 {period}，"
-                        f"資料建立／記錄日期 {announcement_text}。營收單位為新台幣億元。"
-                    )
-                except Exception as e:
-                    st.info(f"月營收趨勢目前抓不到：{e}")
-
-                try:
-                    eps_result = load_eps_summary(symbol)
-                    eps_date = eps_result["latest_date"]
-                    quarter = f"{eps_date.year} Q{(eps_date.month - 1) // 3 + 1}"
-                    eps_yoy = eps_result["quarterly_yoy_pct"]
-                    eps_yoy_text = "N/A" if eps_yoy is None else f"{eps_yoy:+.1f}%"
-                    eps_yoy_color = (
-                        TEXT_MUTED if eps_yoy is None else ("#ef5350" if eps_yoy >= 0 else "#4caf50")
-                    )
-                    try:
-                        current_pe = load_current_pe(symbol)
-                        pe_text = f"{current_pe['value']:.1f}x"
-                        pe_date_text = current_pe["date"].strftime("%Y-%m-%d")
-                    except Exception:
-                        pe_text = "N/A"
-                        pe_date_text = "無正 PE 資料"
-
-                    st.markdown(
-                        f"<div style='color:{ACCENT}; font-size:14px; margin-top:12px;'>實際獲利與估值</div>"
-                        f"<div style='display:flex; gap:12px; flex-wrap:wrap; margin:7px 0 4px;'>"
-                        f"<div style='flex:1; min-width:140px; background:{GRID}55; border-radius:7px; padding:8px 12px;'>"
-                        f"<div style='color:{TEXT_MUTED}; font-size:11px;'>{quarter} 單季 EPS</div>"
-                        f"<div style='font-size:18px;'>{eps_result['latest_eps']:.2f} 元</div></div>"
-                        f"<div style='flex:1; min-width:140px; background:{GRID}55; border-radius:7px; padding:8px 12px;'>"
-                        f"<div style='color:{TEXT_MUTED}; font-size:11px;'>近四季實際 EPS</div>"
-                        f"<div style='font-size:18px;'>{eps_result['ttm_eps']:.2f} 元</div></div>"
-                        f"<div style='flex:1; min-width:140px; background:{GRID}55; border-radius:7px; padding:8px 12px;'>"
-                        f"<div style='color:{TEXT_MUTED}; font-size:11px;'>單季 EPS YoY</div>"
-                        f"<div style='color:{eps_yoy_color}; font-size:18px;'>{eps_yoy_text}</div></div>"
-                        f"<div style='flex:1; min-width:140px; background:{GRID}55; border-radius:7px; padding:8px 12px;'>"
-                        f"<div style='color:{TEXT_MUTED}; font-size:11px;'>目前官方 PE</div>"
-                        f"<div style='font-size:18px;'>{pe_text}</div></div></div>",
-                        unsafe_allow_html=True,
-                    )
-                    st.caption(
-                        f"EPS 資料源：FinMind TaiwanStockFinancialStatements，最新財報季度 {quarter}；"
-                        f"PE 資料源：TaiwanStockPER，資料日期 {pe_date_text}。以上皆為已公告實際值。"
-                    )
-                    for adjustment in eps_result["basis_adjustments"]:
-                        factor = float(adjustment["basis_factor"])
-                        action_date = pd.Timestamp(adjustment["date"]).strftime("%Y-%m-%d")
-                        ratio_text = f"÷ {1 / factor:g}" if factor < 1 else f"× {factor:g}"
-                        st.caption(
-                            f"↳ 已依 {action_date}「{adjustment['type']}」將事件日前 EPS {ratio_text}，"
-                            "統一成目前股數基準後再計算 TTM 與 YoY。"
-                        )
-                except Exception as e:
-                    st.info(f"實際 EPS 摘要目前抓不到：{e}")
-
-            if show_pe_river:
-                try:
-                    river = load_pe_river(symbol)
-                    latest_date = river["latest_date"].strftime("%Y-%m-%d")
-                    st.markdown(
-                        f"<div style='display:flex; gap:24px; align-items:baseline; margin-top:6px;'>"
-                        f"<span style='color:{ACCENT}; font-size:14px;'>本益比歷史分位河流</span>"
-                        f"<span style='font-size:13px;'>目前 PE {river['current_pe']:.1f}x</span>"
-                        f"<span style='color:{TEXT_MUTED}; font-size:12px;'>"
-                        f"近5年百分位 {river['current_percentile']:.0f}% · 資料截至 {latest_date}</span>"
-                        f"</div>",
-                        unsafe_allow_html=True,
-                    )
-                    st.plotly_chart(
-                        render_pe_river(river), width="stretch", config={"displayModeBar": False}
-                    )
-                    st.caption(
-                        "資料源：FinMind TaiwanStockPER。P20／P40／P60／P80 是此股票近5年正本益比的"
-                        "歷史分位數；估值線＝每日反推近四季 EPS × 各分位 PE，並非目標價。"
-                    )
-                    for adjustment in river["basis_adjustments"]:
-                        factor = float(adjustment["basis_factor"])
-                        action_date = pd.Timestamp(adjustment["date"]).strftime("%Y-%m-%d")
-                        price_action = f"÷ {1 / factor:g}" if factor < 1 else f"× {factor:g}"
-                        st.caption(
-                            f"↳ 河流圖已依 {action_date}「{adjustment['type']}」將事件日前價格 "
-                            f"{price_action}；官方 PE 比率本身維持不變，避免重複調整。"
-                        )
-                except Exception as e:
-                    st.info(f"本益比河流圖目前不適用：{e}")
-        else:
-            st.caption("個股基本面與估值圖僅適用一般公司；指數與 ETF 不套用月營收／EPS／PE 模型。")
