@@ -75,14 +75,14 @@ TEXT_MUTED = "#8a8880"
 TEXT_LIGHT = "#e8e6e0"
 BUDGET_USD = 5.0  # AI 摘要功能的花費上限提示，之後隨時可以改
 
-st.set_page_config(page_title="坤泥投資大賺錢", layout="wide")
+st.set_page_config(page_title="台股投資雷達", layout="wide")
 
 st.markdown(
     f"""
     <div style="display:flex; justify-content:space-between; align-items:baseline;
                 border-bottom:1px solid {GRID}; padding-bottom:12px; margin-bottom:20px;">
       <div>
-        <span style="color:{ACCENT}; font-size:22px;">坤泥投資大賺錢</span>
+        <span style="color:{ACCENT}; font-size:22px;">台股投資雷達</span>
         <div style="color:{TEXT_MUTED}; font-size:13px;">tw-invest-copilot · v1</div>
       </div>
       <div style="color:{TEXT_MUTED}; font-size:13px;">
@@ -460,7 +460,7 @@ def render_pe_river(result: dict):
         ),
         plot_bgcolor=CARD_BG,
         paper_bgcolor=CARD_BG,
-        font=dict(color=TEXT_MUTED, family="monospace"),
+        font=dict(color=TEXT_MUTED, family="monospace", size=12),
         hovermode="x unified",
         xaxis=dict(showgrid=False, color=TEXT_MUTED),
         yaxis=dict(gridcolor=GRID, color=TEXT_MUTED),
@@ -504,7 +504,7 @@ def render_revenue_trend(result: dict, months: int = 12):
         ),
         plot_bgcolor=CARD_BG,
         paper_bgcolor=CARD_BG,
-        font=dict(color=TEXT_MUTED, family="monospace"),
+        font=dict(color=TEXT_MUTED, family="monospace", size=12),
         hovermode="x unified",
         xaxis=dict(type="category", showgrid=False, color=TEXT_MUTED),
     )
@@ -516,9 +516,9 @@ def render_revenue_trend(result: dict, months: int = 12):
 def _metric_cards(items: list[tuple]) -> str:
     """把 (標題, 值 HTML, 值顏色) 串成一排等寬卡片的 HTML。"""
     cells = "".join(
-        f"<div style='flex:1; min-width:120px; background:{GRID}55; border-radius:7px; padding:8px 12px;'>"
-        f"<div style='color:{TEXT_MUTED}; font-size:11px;'>{title}</div>"
-        f"<div style='color:{color}; font-size:18px;'>{value}</div></div>"
+        f"<div style='flex:1; min-width:120px; background:{GRID}55; border-radius:7px; padding:9px 13px;'>"
+        f"<div style='color:{TEXT_MUTED}; font-size:12px;'>{title}</div>"
+        f"<div style='color:{color}; font-size:20px;'>{value}</div></div>"
         for title, value, color in items
     )
     return f"<div style='display:flex; gap:12px; flex-wrap:wrap; margin:7px 0 4px;'>{cells}</div>"
@@ -565,7 +565,7 @@ def render_chips_tab(symbol: str):
         fig.update_layout(
             height=220, margin=dict(l=10, r=10, t=10, b=10),
             plot_bgcolor=CARD_BG, paper_bgcolor=CARD_BG,
-            font=dict(color=TEXT_MUTED, family="monospace"),
+            font=dict(color=TEXT_MUTED, family="monospace", size=12),
             xaxis=dict(type="category", showgrid=False, color=TEXT_MUTED, nticks=10),
             yaxis=dict(gridcolor=GRID, color=TEXT_MUTED, title="外資淨買賣超（張）"),
         )
@@ -605,7 +605,7 @@ def render_chips_tab(symbol: str):
             legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1,
                         font=dict(color=TEXT_MUTED, size=10)),
             plot_bgcolor=CARD_BG, paper_bgcolor=CARD_BG,
-            font=dict(color=TEXT_MUTED, family="monospace"),
+            font=dict(color=TEXT_MUTED, family="monospace", size=12),
             xaxis=dict(type="category", showgrid=False, color=TEXT_MUTED, nticks=10),
         )
         fig.update_yaxes(title_text="融資", gridcolor=GRID, color="#e8935a", secondary_y=False)
@@ -640,7 +640,7 @@ def render_chips_tab(symbol: str):
         fig.update_layout(
             height=200, margin=dict(l=10, r=10, t=10, b=10),
             plot_bgcolor=CARD_BG, paper_bgcolor=CARD_BG,
-            font=dict(color=TEXT_MUTED, family="monospace"),
+            font=dict(color=TEXT_MUTED, family="monospace", size=12),
             xaxis=dict(type="category", showgrid=False, color=TEXT_MUTED, nticks=8),
             yaxis=dict(gridcolor=GRID, color=TEXT_MUTED, title="%"),
         )
@@ -843,6 +843,85 @@ for col, spec in zip(alert_cols[1:], ALERT_INDICATORS):
                 )
 
 
+def render_technical_tab(symbol, df, display_df, latest, signal, ma_signals):
+    """技術面：前高／均線穿越訊號徽章 ＋ K 線（疊布林、均線、前高線）。"""
+    if signal:
+        st.markdown(
+            f"<div style='background:{ACCENT}22; color:{ACCENT}; border-radius:6px; "
+            f"padding:6px 12px; font-size:13px; display:inline-block; margin-bottom:8px;'>"
+            f"{signal['message']}</div>",
+            unsafe_allow_html=True,
+        )
+    if ma_signals:
+        badges = []
+        for ma_signal in ma_signals:
+            color = "#4caf50" if ma_signal["direction"] == "down" else "#ef5350"
+            badges.append(
+                f"<span style='background:{color}18; color:{color}; border:1px solid {color}55; "
+                f"border-radius:6px; padding:5px 10px; font-size:12px; display:inline-block; "
+                f"margin:0 6px 8px 0;'>{ma_signal['message']}</span>"
+            )
+        st.markdown("".join(badges), unsafe_allow_html=True)
+
+    dates_str = display_df.index.strftime("%Y-%m-%d")  # 類別軸用字串日期，天然跳過週末不留空隙
+    fig = go.Figure()
+    fig.add_trace(
+        go.Candlestick(
+            x=dates_str, open=display_df["Open"], high=display_df["High"],
+            low=display_df["Low"], close=display_df["Close"],
+            name="K線", showlegend=False, line=dict(width=1),
+            increasing_line_color="#ef5350", increasing_fillcolor="#ef5350",
+            decreasing_line_color="#4caf50", decreasing_fillcolor="#4caf50",
+        )
+    )
+    fig.add_trace(
+        go.Scatter(x=dates_str, y=display_df["BB_lower"], name="布林下軌",
+                   line=dict(color="#5f5e5a", width=1, dash="dot"), showlegend=False)
+    )
+    fig.add_trace(
+        go.Scatter(x=dates_str, y=display_df["BB_upper"], name="布林通道",
+                   line=dict(color="#5f5e5a", width=1, dash="dot"),
+                   fill="tonexty", fillcolor="rgba(95,94,90,0.12)")
+    )
+    for w in MA_WINDOWS:
+        ma_value = latest[f"MA{w}"]
+        label = f"MA{w} {ma_value:.1f}" if pd.notna(ma_value) else f"MA{w} N/A"
+        fig.add_trace(
+            go.Scatter(x=dates_str, y=display_df[f"MA{w}"], name=label,
+                       line=dict(color=MA_COLORS[w], width=1.3))
+        )
+    if signal:
+        fig.add_hline(
+            y=signal["front_high"], line=dict(color=ACCENT, width=1.2, dash="dash"),
+            annotation_text=f"前高 {signal['front_high']:.1f}",
+            annotation_position="top left", annotation_font=dict(color=ACCENT, size=12),
+        )
+    fig.update_layout(
+        height=300, margin=dict(l=8, r=8, t=8, b=8),
+        xaxis_rangeslider_visible=False,
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1,
+                    font=dict(color=TEXT_MUTED, size=12)),
+        plot_bgcolor=CARD_BG, paper_bgcolor=CARD_BG,
+        font=dict(color=TEXT_LIGHT, family="monospace", size=12),
+        hovermode="x unified",
+        xaxis=dict(type="category", showgrid=False, color=TEXT_MUTED,
+                   tickfont=dict(size=12), nticks=8),
+        yaxis=dict(gridcolor=GRID, color=TEXT_MUTED, tickfont=dict(size=12)),
+    )
+    st.plotly_chart(fig, width="stretch", config={"displayModeBar": False})
+    for adjustment in df.attrs.get("share_basis_adjustments", []):
+        factor = float(adjustment["basis_factor"])
+        action_date = pd.Timestamp(adjustment["date"]).strftime("%Y-%m-%d")
+        if factor < 1:
+            price_action, volume_action = f"÷ {1 / factor:g}", f"× {1 / factor:g}"
+        else:
+            price_action, volume_action = f"× {factor:g}", f"÷ {factor:g}"
+        st.caption(
+            f"↳ {action_date}「{adjustment['type']}」：事件日前價格已 {price_action}、"
+            f"成交量已 {volume_action} 還原為目前單位基準；圖上的落差不計為漲跌。"
+        )
+
+
 # 標的篩選緊接在警示指標之後，讓「市場警示 → 選擇標的 → K 線」形成連續閱讀順序。
 with st.container(border=True):
     st.markdown(
@@ -921,120 +1000,24 @@ for t in ticker_data:
             unsafe_allow_html=True,
         )
 
-        if signal:
-            st.markdown(
-                f"<div style='background:{ACCENT}22; color:{ACCENT}; border-radius:6px; "
-                f"padding:6px 12px; font-size:13px; display:inline-block; margin-bottom:8px;'>"
-                f"{signal['message']}</div>",
-                unsafe_allow_html=True,
-            )
-
-        if ma_signals:
-            badges = []
-            for ma_signal in ma_signals:
-                color = "#4caf50" if ma_signal["direction"] == "down" else "#ef5350"
-                badges.append(
-                    f"<span style='background:{color}18; color:{color}; border:1px solid {color}55; "
-                    f"border-radius:6px; padding:5px 10px; font-size:12px; display:inline-block; "
-                    f"margin:0 6px 8px 0;'>{ma_signal['message']}</span>"
-                )
-            st.markdown("".join(badges), unsafe_allow_html=True)
-
-        dates_str = display_df.index.strftime("%Y-%m-%d")  # 類別軸用字串日期，天然跳過週末不留空隙
-
-        fig = go.Figure()
-        fig.add_trace(
-            go.Candlestick(
-                x=dates_str,
-                open=display_df["Open"],
-                high=display_df["High"],
-                low=display_df["Low"],
-                close=display_df["Close"],
-                name="K線",
-                showlegend=False,
-                line=dict(width=1),
-                # 台股慣例：紅漲、綠跌（跟 Plotly 預設的美式紅跌綠漲相反）
-                increasing_line_color="#ef5350",
-                increasing_fillcolor="#ef5350",
-                decreasing_line_color="#4caf50",
-                decreasing_fillcolor="#4caf50",
-            )
+        # 大按鈕切換三面向；只 render 選中的那個，其餘不抓資料（避免 16 檔一次打爆 API）。
+        face = st.segmented_control(
+            "面向",
+            options=["技術面", "籌碼面", "基本面"],
+            default="技術面",
+            key=f"face_{symbol}",
+            label_visibility="collapsed",
         )
-        # 布林通道：先畫下軌（不填色）、再畫上軌並往下填色到下軌，形成一個帶狀區間
-        fig.add_trace(
-            go.Scatter(
-                x=dates_str, y=display_df["BB_lower"], name="布林下軌",
-                line=dict(color="#5f5e5a", width=1, dash="dot"), showlegend=False,
-            )
-        )
-        fig.add_trace(
-            go.Scatter(
-                x=dates_str, y=display_df["BB_upper"], name="布林通道",
-                line=dict(color="#5f5e5a", width=1, dash="dot"),
-                fill="tonexty", fillcolor="rgba(95,94,90,0.12)",
-            )
-        )
-        for w in MA_WINDOWS:
-            ma_value = latest[f"MA{w}"]
-            label = f"MA{w} {ma_value:.1f}" if pd.notna(ma_value) else f"MA{w} N/A"
-            fig.add_trace(
-                go.Scatter(
-                    x=dates_str,
-                    y=display_df[f"MA{w}"],
-                    name=label,
-                    line=dict(color=MA_COLORS[w], width=1),
-                )
-            )
-        if signal:
-            # 標出前高位置：橘色虛線＋價位標籤，跟警示標籤同色系一眼對得起來
-            fig.add_hline(
-                y=signal["front_high"],
-                line=dict(color=ACCENT, width=1.2, dash="dash"),
-                annotation_text=f"前高 {signal['front_high']:.1f}",
-                annotation_position="top left",
-                annotation_font=dict(color=ACCENT, size=11),
-            )
-        fig.update_layout(
-            height=380,
-            margin=dict(l=10, r=10, t=10, b=10),
-            xaxis_rangeslider_visible=False,
-            legend=dict(
-                orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1,
-                font=dict(color=TEXT_MUTED, size=11),
-            ),
-            plot_bgcolor=CARD_BG,
-            paper_bgcolor=CARD_BG,
-            font=dict(color=TEXT_MUTED, family="monospace"),
-            hovermode="x unified",
-            xaxis=dict(type="category", showgrid=False, color=TEXT_MUTED, nticks=8),
-            yaxis=dict(gridcolor=GRID, color=TEXT_MUTED),
-        )
-        st.plotly_chart(fig, width="stretch")
-        for adjustment in df.attrs.get("share_basis_adjustments", []):
-            factor = float(adjustment["basis_factor"])
-            action_date = pd.Timestamp(adjustment["date"]).strftime("%Y-%m-%d")
-            if factor < 1:
-                price_action = f"÷ {1 / factor:g}"
-                volume_action = f"× {1 / factor:g}"
+        if face == "籌碼面":
+            if is_institutional_applicable(symbol):
+                render_chips_tab(symbol)
             else:
-                price_action = f"× {factor:g}"
-                volume_action = f"÷ {factor:g}"
-            st.caption(
-                f"↳ {action_date}「{adjustment['type']}」：事件日前價格已 {price_action}、"
-                f"成交量已 {volume_action} 還原為目前單位基準；圖上的落差不計為漲跌。"
-            )
-
-        detail_open = st.toggle("＋ 展開 籌碼面 ／ 基本面 詳情", key=f"show_detail_{symbol}")
-        if detail_open:
-            chips_tab, fund_tab = st.tabs(["籌碼面", "基本面"])
-            with chips_tab:
-                if is_institutional_applicable(symbol):
-                    render_chips_tab(symbol)
-                else:
-                    st.caption("指數沒有個股籌碼；三大法人／融資融券／外資持股為個股與 ETF 適用。")
-            with fund_tab:
-                if is_company_fundamentals_applicable(symbol):
-                    render_fundamentals_tab(symbol)
-                else:
-                    st.caption("個股基本面與估值圖僅適用一般公司；指數與 ETF 不套用月營收／EPS／PE 模型。")
+                st.caption("指數沒有個股籌碼；三大法人／融資融券／外資持股為個股與 ETF 適用。")
+        elif face == "基本面":
+            if is_company_fundamentals_applicable(symbol):
+                render_fundamentals_tab(symbol)
+            else:
+                st.caption("個股基本面與估值圖僅適用一般公司；指數與 ETF 不套用月營收／EPS／PE 模型。")
+        else:  # 技術面（預設，含 face 被取消選取時的 None）
+            render_technical_tab(symbol, df, display_df, latest, signal, ma_signals)
 
