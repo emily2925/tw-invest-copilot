@@ -7,3 +7,7 @@ venv/
 .streamlit/secrets.toml
 .DS_Store
 .spend_tracker.json
+AGENTS.md
+CLAUDE.md
+ai-application-engineer-learning-plan.html
+DEVELOP_PLAN.md
