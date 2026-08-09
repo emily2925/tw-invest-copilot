@@ -998,10 +998,6 @@ def _stock_change_pct(t) -> float:
 # 一眼掃完所有標的；點一列 → 下方顯示該檔「技術面／籌碼面／基本面」三欄並排。
 list_rows = []
 for t in ticker_data:
-    sig_parts = []
-    if t["signal"]:
-        sig_parts.append(t["signal"]["message"])
-    sig_parts.extend(ms["message"] for ms in t["ma_signals"])
     list_rows.append(
         {
             "名稱": t["name"],
@@ -1009,7 +1005,6 @@ for t in ticker_data:
             "產業": t["category"],
             "現價": t["price"],
             "漲跌%": _stock_change_pct(t),
-            "技術訊號": " · ".join(sig_parts),
         }
     )
 list_df = pd.DataFrame(list_rows)
@@ -1024,7 +1019,6 @@ list_event = st.dataframe(
     column_config={
         "現價": st.column_config.NumberColumn(format="%.2f"),
         "漲跌%": st.column_config.NumberColumn(format="%+.2f%%"),
-        "技術訊號": st.column_config.TextColumn(width="large"),
     },
     key="stock_list",
 )
