@@ -792,25 +792,7 @@ for col, spec in zip(alert_cols[1:], ALERT_INDICATORS):
 
 
 def render_technical_tab(symbol, df, display_df, latest, signal, ma_signals):
-    """技術面：前高／均線穿越訊號徽章 ＋ K 線（疊布林、均線、前高線）。"""
-    if signal:
-        st.markdown(
-            f"<div style='background:{ACCENT}22; color:{ACCENT}; border-radius:6px; "
-            f"padding:6px 12px; font-size:13px; display:inline-block; margin-bottom:8px;'>"
-            f"{signal['message']}</div>",
-            unsafe_allow_html=True,
-        )
-    if ma_signals:
-        badges = []
-        for ma_signal in ma_signals:
-            color = "#4caf50" if ma_signal["direction"] == "down" else "#ef5350"
-            badges.append(
-                f"<span style='background:{color}18; color:{color}; border:1px solid {color}55; "
-                f"border-radius:6px; padding:5px 10px; font-size:12px; display:inline-block; "
-                f"margin:0 6px 8px 0;'>{ma_signal['message']}</span>"
-            )
-        st.markdown("".join(badges), unsafe_allow_html=True)
-
+    """技術面：K 線（疊布林、均線）。規則式警告徽章與前高線已移除，改由 AI 綜合分析詮釋。"""
     dates_str = display_df.index.strftime("%Y-%m-%d")  # 類別軸用字串日期，天然跳過週末不留空隙
     fig = go.Figure()
     fig.add_trace(
@@ -837,12 +819,6 @@ def render_technical_tab(symbol, df, display_df, latest, signal, ma_signals):
         fig.add_trace(
             go.Scatter(x=dates_str, y=display_df[f"MA{w}"], name=label,
                        line=dict(color=MA_COLORS[w], width=1.3))
-        )
-    if signal:
-        fig.add_hline(
-            y=signal["front_high"], line=dict(color=ACCENT, width=1.2, dash="dash"),
-            annotation_text=f"前高 {signal['front_high']:.1f}",
-            annotation_position="top left", annotation_font=dict(color=ACCENT, size=12),
         )
     fig.update_layout(
         height=300, margin=dict(l=8, r=8, t=8, b=8),
