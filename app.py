@@ -1082,23 +1082,29 @@ with st.container(border=True):
         unsafe_allow_html=True,
     )
 
-    tech_col, chips_col, fund_col = st.columns(3)
-    with tech_col:
-        st.markdown(f"<div style='color:{ACCENT}; font-size:14px; margin-bottom:4px;'>技術面</div>",
-                    unsafe_allow_html=True)
-        render_technical_tab(symbol, df, display_df, latest, signal, ma_signals)
-    with chips_col:
-        st.markdown(f"<div style='color:{ACCENT}; font-size:14px; margin-bottom:4px;'>籌碼面</div>",
-                    unsafe_allow_html=True)
-        if is_institutional_applicable(symbol):
-            render_chips_tab(symbol)
-        else:
-            st.caption("指數沒有個股籌碼；三大法人／融資融券／外資持股為個股與 ETF 適用。")
-    with fund_col:
-        st.markdown(f"<div style='color:{ACCENT}; font-size:14px; margin-bottom:4px;'>基本面</div>",
-                    unsafe_allow_html=True)
-        if is_company_fundamentals_applicable(symbol):
-            render_fundamentals_tab(symbol)
-        else:
-            st.caption("個股基本面與估值圖僅適用一般公司；指數與 ETF 不套用月營收／EPS／PE 模型。")
+    # 三列堆疊、每列滿版（圖表都 width="stretch" 撐滿整列）；順序：技術→基本→籌碼。
+    def _face_header(title):
+        st.markdown(
+            f"<div style='color:{ACCENT}; font-size:15px; font-weight:600; "
+            f"border-bottom:1px solid {GRID}; padding-bottom:5px; margin:16px 0 8px;'>{title}</div>",
+            unsafe_allow_html=True,
+        )
+
+    # 第一列：技術面
+    _face_header("技術面")
+    render_technical_tab(symbol, df, display_df, latest, signal, ma_signals)
+
+    # 第二列：基本面
+    _face_header("基本面")
+    if is_company_fundamentals_applicable(symbol):
+        render_fundamentals_tab(symbol)
+    else:
+        st.caption("個股基本面與估值圖僅適用一般公司；指數與 ETF 不套用月營收／EPS／PE 模型。")
+
+    # 第三列：籌碼面
+    _face_header("籌碼面")
+    if is_institutional_applicable(symbol):
+        render_chips_tab(symbol)
+    else:
+        st.caption("指數沒有個股籌碼；三大法人／融資融券／外資持股為個股與 ETF 適用。")
 
