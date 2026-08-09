@@ -67,29 +67,70 @@ except ModuleNotFoundError as exc:
     st.caption("請將這一行回報給開發者，以便修正 requirements.txt。")
     st.stop()
 
-ACCENT = "#e8935a"
-BG = "#0d0d0d"
-CARD_BG = "#161616"
-GRID = "#2a2a2a"
-TEXT_MUTED = "#8a8880"
-TEXT_LIGHT = "#e8e6e0"
 BUDGET_USD = 5.0  # AI 摘要功能的花費上限提示，之後隨時可以改
 
 st.set_page_config(page_title="台股投資雷達", layout="wide")
 
+# 主題色盤：暗色（終端機風）與亮色兩套。畫面所有顏色（含 plotly 圖）都吃這幾個常數，
+# 所以切換主題只要換這組值 + 注入對應 CSS 蓋掉 Streamlit 外框即可。
+PALETTES = {
+    "暗色": {"ACCENT": "#e8935a", "BG": "#0d0d0d", "CARD_BG": "#161616",
+             "GRID": "#2a2a2a", "TEXT_MUTED": "#8a8880", "TEXT_LIGHT": "#e8e6e0"},
+    "亮色": {"ACCENT": "#c66a2e", "BG": "#f5f3ee", "CARD_BG": "#ffffff",
+             "GRID": "#e0dbd0", "TEXT_MUTED": "#6b6658", "TEXT_LIGHT": "#2a2721"},
+}
+theme_name = st.session_state.get("theme_choice", "暗色")
+_pal = PALETTES.get(theme_name, PALETTES["暗色"])
+ACCENT = _pal["ACCENT"]
+BG = _pal["BG"]
+CARD_BG = _pal["CARD_BG"]
+GRID = _pal["GRID"]
+TEXT_MUTED = _pal["TEXT_MUTED"]
+TEXT_LIGHT = _pal["TEXT_LIGHT"]
+
+# 注入主題 CSS：蓋掉 Streamlit 內建的頁面底色、文字色、卡片底色與邊框。
 st.markdown(
     f"""
-    <div style="display:flex; justify-content:space-between; align-items:baseline;
-                border-bottom:1px solid {GRID}; padding-bottom:12px; margin-bottom:20px;">
-      <div>
-        <span style="color:{ACCENT}; font-size:22px;">台股投資雷達</span>
-        <div style="color:{TEXT_MUTED}; font-size:13px;">tw-invest-copilot · v1</div>
-      </div>
-      <div style="color:{TEXT_MUTED}; font-size:13px;">
-        last update: {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}
-      </div>
-    </div>
+    <style>
+      .stApp, [data-testid="stAppViewContainer"], [data-testid="stMain"],
+      [data-testid="stHeader"] {{ background-color: {BG} !important; }}
+      [data-testid="stAppViewContainer"], .stApp, [data-testid="stMarkdownContainer"],
+      .stMarkdown, p, span, label, h1, h2, h3, [data-testid="stWidgetLabel"] p {{
+        color: {TEXT_LIGHT};
+      }}
+      [data-testid="stCaptionContainer"], [data-testid="stCaptionContainer"] * {{
+        color: {TEXT_MUTED} !important;
+      }}
+      /* st.container(border=True) 卡片底色與邊框 */
+      [data-testid="stVerticalBlockBorderWrapper"] {{
+        background-color: {CARD_BG}; border-color: {GRID} !important;
+      }}
+    </style>
     """,
+    unsafe_allow_html=True,
+)
+
+head_col, theme_col = st.columns([5, 1])
+with head_col:
+    st.markdown(
+        f"""
+        <div style="display:flex; align-items:baseline; gap:12px;
+                    padding-bottom:12px; margin-bottom:8px;">
+          <span style="color:{ACCENT}; font-size:22px;">台股投資雷達</span>
+          <span style="color:{TEXT_MUTED}; font-size:13px;">tw-invest-copilot · v1</span>
+          <span style="color:{TEXT_MUTED}; font-size:13px;">
+            · last update: {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}</span>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+with theme_col:
+    st.segmented_control(
+        "主題", options=["暗色", "亮色"], default="暗色",
+        key="theme_choice", label_visibility="collapsed",
+    )
+st.markdown(
+    f"<div style='border-bottom:1px solid {GRID}; margin-bottom:20px;'></div>",
     unsafe_allow_html=True,
 )
 
