@@ -21,4 +21,12 @@ WATCHLIST = [
     {"symbol": "2408.TW", "name": "南亞科", "category": "記憶體"},
     {"symbol": "8046.TW", "name": "南電", "category": "載板"},
     {"symbol": "3189.TW", "name": "景碩", "category": "載板"},
+    {"symbol": "6213.TW", "name": "聯茂", "category": "CCL"},
+    {"symbol": "8358.TWO", "name": "金居", "category": "CCL"},
+    {"symbol": "3081.TWO", "name": "聯亞", "category": "光通／AI伺服器"},
+    {"symbol": "6669.TW", "name": "緯穎", "category": "光通／AI伺服器"},
+    {"symbol": "3653.TW", "name": "健策", "category": "散熱廠務"},
+    {"symbol": "3017.TW", "name": "奇鋐", "category": "散熱廠務"},
+    {"symbol": "3443.TW", "name": "創意", "category": "IC設計"},
+    {"symbol": "2454.TW", "name": "聯發科", "category": "IC設計"},
 ]
