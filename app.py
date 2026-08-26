@@ -59,6 +59,7 @@ try:
     from market_data.overnight import fetch_overnight_intraday, get_overnight_sentiment
     from market_data.pe_fetch import fetch_pe_history
     from market_data.valuation import build_pe_river, is_pe_river_applicable
+    from views.ai_industry_map import render_ai_industry_map
 except ModuleNotFoundError as exc:
     # Streamlit Cloud 的預設錯誤頁會隱藏真正缺少的模組名稱，導致無法遠端診斷。
     # 只顯示 exc.name（不含路徑、環境變數或 traceback），不會洩漏 secrets。
@@ -155,6 +156,25 @@ st.markdown(
     f"<div style='border-bottom:1px solid {GRID}; margin-bottom:20px;'></div>",
     unsafe_allow_html=True,
 )
+
+page_choice = st.segmented_control(
+    "頁面",
+    options=["個股雷達", "AI 產業地圖"],
+    default="個股雷達",
+    key="page_choice",
+    label_visibility="collapsed",
+)
+
+if page_choice == "AI 產業地圖":
+    render_ai_industry_map(
+        accent=ACCENT,
+        bg=BG,
+        card_bg=CARD_BG,
+        grid=GRID,
+        text_muted=TEXT_MUTED,
+        text_light=TEXT_LIGHT,
+    )
+    st.stop()
 
 # 分類順序依 WATCHLIST 第一次出現的順序，避免每次重跑後選項跳動。
 categories = list(dict.fromkeys(item["category"] for item in WATCHLIST))
@@ -1075,4 +1095,3 @@ with st.container(border=True):
         render_chips_tab(symbol)
     else:
         st.caption("指數沒有個股籌碼；三大法人／融資融券／外資持股為個股與 ETF 適用。")
-
