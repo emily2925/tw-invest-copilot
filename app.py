@@ -903,8 +903,12 @@ def render_ai_analysis(symbol, name, df, latest, signal, ma_signals, price, chan
         st.progress(frac)
 
     if _ai_required_pw and not ai_unlocked:
-        pw = st.text_input("🔒 AI 分析需要密碼（圖表不用）", type="password", key="ai_pw_input",
-                           placeholder="輸入密碼以解鎖 AI 分析")
+        pw = st.text_input(
+            "🔒 AI 分析需要密碼（圖表不用）",
+            type="password",
+            key=f"ai_pw_input_{symbol}",
+            placeholder="輸入密碼以解鎖 AI 分析",
+        )
         if pw == _ai_required_pw:
             st.session_state.ai_unlocked = True
             st.rerun()
