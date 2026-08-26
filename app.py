@@ -28,6 +28,7 @@ for _key in ("ANTHROPIC_API_KEY", "FINMIND_API_TOKEN"):
         pass
 
 try:
+    from agent.analysis_store import load_latest_analysis, save_latest_analysis, taipei_now_text
     from agent.stock_analyst import build_stock_context, generate_stock_analysis
     from agent.spend_tracker import add_spend, load_total_spend
     from config.watchlist import WATCHLIST
@@ -867,15 +868,24 @@ def render_technical_tab(symbol, df, display_df, latest, signal, ma_signals):
 
 
 def render_ai_analysis(symbol, name, df, latest, signal, ma_signals, price, change_pct):
-    """個股 AI 綜合分析：只在按鈕點下時才呼叫 Opus（刷新頁面不會重跑），結果存 session_state。"""
+    """個股 AI 綜合分析：每檔保留最後一次成功結果，切換篩選或 session 後仍可讀回。"""
     state_key = f"ai_analysis_{symbol}"
+    error_key = f"ai_analysis_error_{symbol}"
+    if state_key not in st.session_state:
+        try:
+            stored_result = load_latest_analysis(symbol)
+        except Exception:
+            stored_result = None
+        if stored_result:
+            st.session_state[state_key] = stored_result
+    result = st.session_state.get(state_key)
     total_spend = load_total_spend()
 
     head_col, cost_col = st.columns([3, 1])
     with head_col:
         st.markdown(
             f"<div style='color:{ACCENT}; font-size:15px; font-weight:600;'>🤖 AI 綜合分析</div>"
-            f"<div style='color:{TEXT_MUTED}; font-size:11px;'>Opus 仔細研讀技術／基本／籌碼三面向後給操作建議（按鈕才產生，刷新不會）</div>",
+            f"<div style='color:{TEXT_MUTED}; font-size:11px;'>Opus 仔細研讀技術／基本／籌碼三面向後給操作建議（按鈕才產生，每檔保留上次結果）</div>",
             unsafe_allow_html=True,
         )
     with cost_col:
@@ -896,7 +906,8 @@ def render_ai_analysis(symbol, name, df, latest, signal, ma_signals, price, chan
         elif pw:
             st.markdown(f"<div style='color:#e06c75; font-size:12px;'>密碼錯誤</div>", unsafe_allow_html=True)
 
-    if st.button(f"🤖 分析 {name}", disabled=not ai_unlocked, key=f"ai_btn_{symbol}"):
+    button_text = f"🤖 重新分析 {name}" if result and result.get("text") else f"🤖 分析 {name}"
+    if st.button(button_text, disabled=not ai_unlocked, key=f"ai_btn_{symbol}"):
         with st.spinner("AI 正在研讀基本面／技術面／籌碼面…"):
             try:
                 tech = {
@@ -955,21 +966,46 @@ def render_ai_analysis(symbol, name, df, latest, signal, ma_signals, price, chan
                 ctx = build_stock_context(name, symbol, price, change_pct, tech, fund, chips)
                 res = generate_stock_analysis(ctx)
                 add_spend(res["cost_usd"])
-                st.session_state[state_key] = {
-                    "text": res["text"], "cost": res["cost_usd"],
-                    "at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"), "error": None,
+                analyzed_at = taipei_now_text()
+                saved_result = {
+                    "symbol": symbol,
+                    "name": name,
+                    "text": res["text"],
+                    "cost": float(res["cost_usd"]),
+                    "at": analyzed_at,
+                    "error": None,
                 }
+                # 先放進 session，避免資料庫暫時不可寫時連剛完成的付費分析也看不到。
+                st.session_state[state_key] = saved_result
+                st.session_state.pop(error_key, None)
+                try:
+                    save_latest_analysis(
+                        symbol=symbol,
+                        name=name,
+                        text=res["text"],
+                        cost_usd=res["cost_usd"],
+                        analyzed_at=analyzed_at,
+                    )
+                except Exception:
+                    st.session_state[error_key] = (
+                        "AI 分析已完成，但跨 session 保存暫時失敗；本次仍會保留在目前頁面。"
+                    )
             except Exception as e:
-                st.session_state[state_key] = {"text": None, "error": str(e)}
+                # 新分析失敗時不可抹掉上一次成功內容；錯誤另外保存與顯示。
+                st.session_state[error_key] = (
+                    f"AI 分析暫時產生不了：{e}；下方仍保留上一次成功分析。"
+                )
         st.rerun()
 
     result = st.session_state.get(state_key)
-    if result and result.get("error"):
-        st.info(f"AI 分析暫時產生不了：{result['error']}")
-    elif result and result.get("text"):
+    current_error = st.session_state.get(error_key)
+    if current_error:
+        st.info(current_error)
+    if result and result.get("text"):
+        st.caption(f"上次分析時間：{result['at']}（台北時間）")
         st.markdown(result["text"])
         st.caption(
-            f"產生時間 {result['at']} · 這次花費 ${result['cost']:.4f} · "
+            f"這次花費 ${result['cost']:.4f} · "
             "本分析由 AI 生成、僅供參考，不構成投資建議"
         )
     else:
