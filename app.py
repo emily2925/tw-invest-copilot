@@ -61,6 +61,7 @@ try:
     from market_data.pe_fetch import fetch_pe_history
     from market_data.valuation import build_pe_river, is_pe_river_applicable
     from views.ai_industry_map import render_ai_industry_map
+    from views.stock_selection import selected_symbols_from_rows, watchlist_items_to_load
 except ModuleNotFoundError as exc:
     # Streamlit Cloud 的預設錯誤頁會隱藏真正缺少的模組名稱，導致無法遠端診斷。
     # 只顯示 exc.name（不含路徑、環境變數或 traceback），不會洩漏 secrets。
@@ -188,11 +189,15 @@ if selected_category not in ["全部", *categories]:
 selected_range = st.session_state.get("range_filter", "3個月")
 if selected_range not in RANGE_OPTIONS:
     selected_range = "3個月"
+if "confirmed_stock_symbols" not in st.session_state:
+    st.session_state.confirmed_stock_symbols = [WATCHLIST[0]["symbol"]]
+confirmed_stock_symbols = st.session_state.confirmed_stock_symbols
 
 if selected_category == "全部":
     filtered_watchlist = WATCHLIST
 else:
     filtered_watchlist = [item for item in WATCHLIST if item["category"] == selected_category]
+load_watchlist = watchlist_items_to_load(filtered_watchlist, WATCHLIST, confirmed_stock_symbols)
 @st.cache_data(ttl=300)
 def load_history(symbol: str):
     return fetch_history(symbol)
@@ -270,7 +275,7 @@ def load_overnight_intraday():
 # 下面實際畫圖的迴圈會直接重用這裡算好的 df/price/signal，不會重算一次
 # （尤其 get_current_price 會打即時報價 API，重算等於多打一次）。
 ticker_data = []
-for item in filtered_watchlist:
+for item in load_watchlist:
     _symbol, _name = item["symbol"], item["name"]
     _df = load_history(_symbol)
     _price = get_current_price(_symbol, _df)
@@ -1050,10 +1055,12 @@ def _stock_change_pct(t) -> float:
     return (price - prev_close) / prev_close * 100 if prev_close else 0.0
 
 
-# ── 個股清單（可點選）──────────────────────────────────────────────
-# 一眼掃完所有標的；點一列 → 下方顯示該檔「技術面／籌碼面／基本面」三欄並排。
+# ── 個股清單（可多選，送出後才套用）────────────────────────────────
+# 產業 filter 只改變候選清單；勾選過程不載入詳情，按「顯示勾選標的」後才更新下方區域。
+filtered_symbols = {item["symbol"] for item in filtered_watchlist}
+candidate_ticker_data = [t for t in ticker_data if t["symbol"] in filtered_symbols]
 list_rows = []
-for t in ticker_data:
+for t in candidate_ticker_data:
     list_rows.append(
         {
             "名稱": t["name"],
@@ -1065,69 +1072,99 @@ for t in ticker_data:
     )
 list_df = pd.DataFrame(list_rows)
 
-st.caption("點選任一列，看該檔的技術面／籌碼面／基本面三欄並排詳情")
+st.caption("可勾選多檔；勾好後按下方按鈕，才會載入並展開技術面／基本面／籌碼面。")
 list_event = st.dataframe(
     list_df,
     hide_index=True,
     width="stretch",
     on_select="rerun",
-    selection_mode="single-row",
+    selection_mode="multi-row",
     column_config={
         "現價": st.column_config.NumberColumn(format="%.2f"),
         "漲跌%": st.column_config.NumberColumn(format="%+.2f%%"),
     },
-    key="stock_list",
+    # 每個產業保留自己的勾選狀態，避免切換 filter 後沿用相同列號選錯股票。
+    key=f"stock_list_{selected_category}",
 )
 selected_rows = list_event.selection["rows"] if list_event and list_event.selection else []
-selected_idx = selected_rows[0] if selected_rows else 0  # 預設看清單第一檔
+pending_symbols = selected_symbols_from_rows(candidate_ticker_data, selected_rows)
+apply_col, status_col = st.columns([1, 3])
+with apply_col:
+    apply_selection = st.button(
+        f"顯示勾選標的（{len(pending_symbols)}）",
+        type="primary",
+        width="stretch",
+        key=f"apply_stock_selection_{selected_category}",
+    )
 
-# ── 選中個股的三欄並排詳情 ──────────────────────────────────────────
-sel = ticker_data[selected_idx]
-symbol, name, category, df = sel["symbol"], sel["name"], sel["category"], sel["df"]
-price, signal, ma_signals = sel["price"], sel["signal"], sel["ma_signals"]
-latest = df.iloc[-1]
-n = RANGE_OPTIONS[selected_range]
-display_df = df if n is None else df.tail(n)
-change_pct = _stock_change_pct(sel)
-change_color = "#ef5350" if change_pct >= 0 else "#4caf50"  # 台股：紅漲綠跌
-arrow = "▲" if change_pct >= 0 else "▼"
+if apply_selection:
+    if pending_symbols:
+        st.session_state.confirmed_stock_symbols = pending_symbols
+        confirmed_stock_symbols = pending_symbols
+    else:
+        st.warning("請至少勾選一檔股票，再按顯示勾選標的。")
+with status_col:
+    st.caption(
+        f"目前已展開 {len(confirmed_stock_symbols)} 檔；送出新的勾選後會取代目前展開清單。"
+    )
 
-with st.container(border=True):
+
+def _face_header(title):
     st.markdown(
-        f"<span style='color:{TEXT_LIGHT}; font-size:17px;'>{name}</span> "
-        f"<span style='color:{TEXT_MUTED}; font-size:13px;'>{symbol}</span> "
-        f"<span style='color:{ACCENT}; font-size:11px; border:1px solid {ACCENT}66; "
-        f"border-radius:10px; padding:1px 7px;'>{category}</span>"
-        f"<span style='font-size:30px; font-weight:500; margin-left:14px;'>{price:,.2f}</span> "
-        f"<span style='color:{change_color}; font-size:16px;'>{arrow} {abs(change_pct):.2f}%</span>",
+        f"<div style='color:{ACCENT}; font-size:15px; font-weight:600; "
+        f"border-bottom:1px solid {GRID}; padding-bottom:5px; margin:16px 0 8px;'>{title}</div>",
         unsafe_allow_html=True,
     )
 
-    # AI 綜合分析（按鈕觸發）放在三面向之前，讓使用者一選股就能一鍵拿到操作建議。
-    render_ai_analysis(symbol, name, df, latest, signal, ma_signals, price, change_pct)
 
-    # 三列堆疊、每列滿版（圖表都 width="stretch" 撐滿整列）；順序：技術→基本→籌碼。
-    def _face_header(title):
+def render_stock_detail(sel):
+    """依序展開一檔股票的 AI 分析與技術／基本／籌碼三面向。"""
+    symbol, name, category, df = sel["symbol"], sel["name"], sel["category"], sel["df"]
+    price, signal, ma_signals = sel["price"], sel["signal"], sel["ma_signals"]
+    latest = df.iloc[-1]
+    n = RANGE_OPTIONS[selected_range]
+    display_df = df if n is None else df.tail(n)
+    change_pct = _stock_change_pct(sel)
+    change_color = "#ef5350" if change_pct >= 0 else "#4caf50"  # 台股：紅漲綠跌
+    arrow = "▲" if change_pct >= 0 else "▼"
+
+    with st.container(border=True):
         st.markdown(
-            f"<div style='color:{ACCENT}; font-size:15px; font-weight:600; "
-            f"border-bottom:1px solid {GRID}; padding-bottom:5px; margin:16px 0 8px;'>{title}</div>",
+            f"<span style='color:{TEXT_LIGHT}; font-size:17px;'>{name}</span> "
+            f"<span style='color:{TEXT_MUTED}; font-size:13px;'>{symbol}</span> "
+            f"<span style='color:{ACCENT}; font-size:11px; border:1px solid {ACCENT}66; "
+            f"border-radius:10px; padding:1px 7px;'>{category}</span>"
+            f"<span style='font-size:30px; font-weight:500; margin-left:14px;'>{price:,.2f}</span> "
+            f"<span style='color:{change_color}; font-size:16px;'>{arrow} {abs(change_pct):.2f}%</span>",
             unsafe_allow_html=True,
         )
 
-    # 第一列：技術面
-    _face_header("技術面")
-    render_technical_tab(symbol, df, display_df, latest, signal, ma_signals)
+        render_ai_analysis(symbol, name, df, latest, signal, ma_signals, price, change_pct)
 
-    # 第二列：基本面
-    _face_header("基本面")
-    if is_company_fundamentals_applicable(symbol):
-        render_fundamentals_tab(symbol)
-    else:
-        st.caption("個股基本面與估值圖僅適用一般公司；指數與 ETF 不套用月營收／EPS／PE 模型。")
+        _face_header("技術面")
+        render_technical_tab(symbol, df, display_df, latest, signal, ma_signals)
 
-    # 第三列：籌碼面
-    _face_header("籌碼面")
-    if is_institutional_applicable(symbol):
-        render_chips_tab(symbol)
-    else:
-        st.caption("指數沒有個股籌碼；三大法人／融資融券／外資持股為個股與 ETF 適用。")
+        _face_header("基本面")
+        if is_company_fundamentals_applicable(symbol):
+            render_fundamentals_tab(symbol)
+        else:
+            st.caption("個股基本面與估值圖僅適用一般公司；指數與 ETF 不套用月營收／EPS／PE 模型。")
+
+        _face_header("籌碼面")
+        if is_institutional_applicable(symbol):
+            render_chips_tab(symbol)
+        else:
+            st.caption("指數沒有個股籌碼；三大法人／融資融券／外資持股為個股與 ETF 適用。")
+
+
+# ── 已送出標的的詳情 ───────────────────────────────────────────────
+ticker_by_symbol = {t["symbol"]: t for t in ticker_data}
+confirmed_details = [
+    ticker_by_symbol[symbol]
+    for symbol in confirmed_stock_symbols
+    if symbol in ticker_by_symbol
+]
+if len(confirmed_details) > 1:
+    st.caption(f"以下依勾選順序展開 {len(confirmed_details)} 檔；首次載入多檔基本面與籌碼可能稍久。")
+for selected_ticker in confirmed_details:
+    render_stock_detail(selected_ticker)
