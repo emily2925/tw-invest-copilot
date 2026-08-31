@@ -1,8 +1,4 @@
-"""台股投資 AI 工具 — Streamlit dashboard（v1 骨架）。
-
-Hour 5：只顯示追蹤清單的走勢圖 + 均線疊圖，警示/agent 在後面的 checkpoint 才加。
-風格參考使用者提供的深色終端機風 dashboard：深色底、等寬字、橘色重點色、卡片分區。
-"""
+"""台股投資 AI 工具 — Streamlit dashboard。"""
 import os
 import sys
 from datetime import datetime
@@ -72,48 +68,99 @@ except ModuleNotFoundError as exc:
 
 BUDGET_USD = 5.0  # AI 摘要功能的花費上限提示，之後隨時可以改
 
-st.set_page_config(page_title="台股投資雷達", layout="wide")
+st.set_page_config(page_title="台股投資雷達", layout="wide", initial_sidebar_state="collapsed")
 
-# 主題色盤：暗色（終端機風）與亮色兩套。畫面所有顏色（含 plotly 圖）都吃這幾個常數，
-# 所以切換主題只要換這組值 + 注入對應 CSS 蓋掉 Streamlit 外框即可。
-PALETTES = {
-    "暗色": {"ACCENT": "#e8935a", "BG": "#0d0d0d", "CARD_BG": "#161616",
-             "GRID": "#2a2a2a", "TEXT_MUTED": "#8a8880", "TEXT_LIGHT": "#e8e6e0"},
-    "亮色": {"ACCENT": "#c0621f", "BG": "#ece7dc", "CARD_BG": "#ffffff",
-             "GRID": "#c9c0ad", "TEXT_MUTED": "#585245", "TEXT_LIGHT": "#26231d"},
-}
-theme_name = st.session_state.get("theme_choice", "暗色")
-_pal = PALETTES.get(theme_name, PALETTES["暗色"])
-ACCENT = _pal["ACCENT"]
-BG = _pal["BG"]
-CARD_BG = _pal["CARD_BG"]
-GRID = _pal["GRID"]
-TEXT_MUTED = _pal["TEXT_MUTED"]
-TEXT_LIGHT = _pal["TEXT_LIGHT"]
+# 固定亮色主題。Streamlit 原生主題也在 .streamlit/config.toml 設成 light，
+# 這裡再統一自訂卡片、圖表與響應式版面的顏色。
+ACCENT = "#b85d22"
+BG = "#f6f3ec"
+CARD_BG = "#ffffff"
+SOFT_BG = "#fbf8f2"
+GRID = "#ddd5c7"
+TEXT_MUTED = "#6b6256"
+TEXT_LIGHT = "#201c18"
 
-# 注入主題 CSS：蓋掉 Streamlit 內建的頁面底色、文字色、卡片底色與邊框。
+# 注入亮色與手機版 CSS：補齊 Streamlit 原生元件，避免個別板塊沿用系統暗色。
 st.markdown(
     f"""
     <style>
+      :root {{ color-scheme: light; }}
       html, body, .stApp, [data-testid="stAppViewContainer"], [data-testid="stMain"],
       [data-testid="stHeader"] {{ background-color: {BG} !important; }}
+      [data-testid="stMainBlockContainer"] {{ max-width: 1240px; padding-top: 3.5rem; }}
       [data-testid="stAppViewContainer"], .stApp, [data-testid="stMarkdownContainer"],
       .stMarkdown, p, span, label, h1, h2, h3, [data-testid="stWidgetLabel"] p {{
-        color: {TEXT_LIGHT};
+        color: {TEXT_LIGHT} !important;
       }}
       [data-testid="stCaptionContainer"], [data-testid="stCaptionContainer"] * {{
         color: {TEXT_MUTED} !important;
       }}
-      /* st.container(border=True) 卡片底色與明顯邊框 */
+      /* 卡片／收合區 */
       [data-testid="stVerticalBlockBorderWrapper"] {{
         background-color: {CARD_BG} !important;
         border: 1px solid {GRID} !important;
+        border-radius: 14px !important;
+        box-shadow: 0 3px 14px rgba(60, 45, 28, 0.045);
       }}
-      /* 一般按鈕（例：產生今日重點） */
+      [data-testid="stExpander"] {{
+        background-color: {CARD_BG} !important;
+        border: 1px solid {GRID} !important;
+        border-radius: 12px !important;
+        overflow: hidden;
+      }}
+      [data-testid="stExpander"] details, [data-testid="stExpander"] summary {{
+        background-color: {CARD_BG} !important;
+        color: {TEXT_LIGHT} !important;
+      }}
+      [data-testid="stExpander"] summary:hover {{ background-color: {SOFT_BG} !important; }}
+      [data-testid="stExpander"] svg {{ fill: {TEXT_MUTED} !important; }}
+      /* AI 摘要是每檔股票的首要資訊。 */
+      [class*="st-key-ai_summary_"] {{
+        background: #fff8ed;
+        border: 1px solid #edcda8;
+        border-left: 4px solid {ACCENT};
+        border-radius: 12px;
+        padding: 14px 16px 10px;
+        margin: 10px 0 12px;
+      }}
+      .ai-summary-head {{
+        display:flex; align-items:flex-start; justify-content:space-between;
+        gap:12px; margin-bottom:6px;
+      }}
+      .ai-cost-pill {{
+        flex:0 0 auto; color:{TEXT_MUTED}; background:#ffffff;
+        border:1px solid {GRID}; border-radius:999px; padding:3px 9px; font-size:11px;
+      }}
+      .stock-header {{ display:flex; align-items:baseline; flex-wrap:wrap; gap:7px 9px; }}
+      .stock-name {{ color:{TEXT_LIGHT}; font-size:18px; font-weight:650; }}
+      .stock-symbol {{ color:{TEXT_MUTED}; font-size:12px; }}
+      .stock-category {{
+        color:{ACCENT}; font-size:11px; border:1px solid {ACCENT}66;
+        border-radius:999px; padding:1px 8px;
+      }}
+      .stock-price {{ color:{TEXT_LIGHT}; font-size:29px; font-weight:600; margin-left:5px; }}
+      .dashboard-head {{ display:flex; align-items:baseline; flex-wrap:wrap; gap:5px 12px; }}
+      .dashboard-title {{ color:{ACCENT}; font-size:23px; font-weight:650; }}
+      .dashboard-meta {{ color:{TEXT_MUTED}; font-size:12px; }}
+      /* 表單、選單與密碼框 */
+      input, textarea, [data-baseweb="input"], [data-baseweb="select"] > div {{
+        background-color: {CARD_BG} !important;
+        color: {TEXT_LIGHT} !important;
+        border-color: {GRID} !important;
+      }}
       .stButton > button {{
         background-color: {CARD_BG} !important; color: {TEXT_LIGHT} !important;
         border: 1px solid {GRID} !important;
       }}
+      [data-testid="stBaseButton-primary"] {{
+        background-color: {ACCENT} !important; color: #ffffff !important;
+        border-color: {ACCENT} !important;
+      }}
+      [data-testid="stBaseButton-primary"] p {{ color:#ffffff !important; }}
+      .st-key-stock_apply_row .stButton > button {{
+        background-color:{ACCENT} !important; border-color:{ACCENT} !important;
+      }}
+      .st-key-stock_apply_row .stButton > button p {{ color:#ffffff !important; }}
       /* 下拉選單（產業篩選）收合框：整個控制項換成卡片底色＋主題文字色 */
       [data-testid="stSelectbox"] div {{ background-color: {CARD_BG} !important; }}
       [data-testid="stSelectbox"] * {{ color: {TEXT_LIGHT} !important; }}
@@ -130,30 +177,61 @@ st.markdown(
         background-color: {ACCENT}33 !important; color: {ACCENT} !important;
         border-color: {ACCENT} !important;
       }}
+      [data-testid="stAlert"] {{ color:{TEXT_LIGHT} !important; border-radius:10px; }}
+      [data-testid="stProgress"] > div > div {{ background-color:#eadfce !important; }}
+      [data-testid="stProgress"] > div > div > div {{ background-color:{ACCENT} !important; }}
+      hr {{ border-color:{GRID} !important; }}
+
+      /* 警示指標在手機排成 2 × 2；產業地圖的圖與示意圖則上下排列。 */
+      @media (max-width: 767px) {{
+        [data-testid="stMainBlockContainer"] {{
+          padding: 2.75rem .65rem 3rem !important;
+        }}
+        [data-testid="stHeader"] {{ height: 2.25rem; }}
+        .dashboard-head {{ gap:2px 8px; margin-right:1.8rem; }}
+        .dashboard-title {{ width:100%; font-size:21px; }}
+        .dashboard-meta {{ font-size:10px; }}
+        .stock-header {{ gap:4px 7px; }}
+        .stock-name {{ font-size:17px; }}
+        .stock-price {{ width:100%; margin-left:0; font-size:28px; line-height:1.05; }}
+        .ai-summary-head {{ display:block; }}
+        .ai-cost-pill {{ display:inline-block; margin-top:7px; }}
+        [class*="st-key-ai_summary_"] {{ padding:12px 11px 8px; margin-top:9px; }}
+        [data-testid="stVerticalBlockBorderWrapper"] {{ border-radius:12px !important; }}
+        [data-testid="stExpander"] {{ border-radius:10px !important; }}
+        [data-testid="stExpander"] summary {{ padding-left:.75rem !important; padding-right:.75rem !important; }}
+        .st-key-alert_grid [data-testid="stHorizontalBlock"] {{ flex-wrap:wrap; gap:.55rem; }}
+        .st-key-alert_grid [data-testid="stColumn"] {{
+          flex:1 1 calc(50% - .55rem) !important; min-width:calc(50% - .55rem) !important;
+        }}
+        .st-key-industry_map_visuals [data-testid="stHorizontalBlock"] {{ flex-wrap:wrap; }}
+        .st-key-industry_map_visuals [data-testid="stColumn"] {{
+          flex:1 1 100% !important; min-width:100% !important;
+        }}
+        .st-key-stock_filters [data-testid="stHorizontalBlock"] {{ flex-wrap:wrap; }}
+        .st-key-stock_filters [data-testid="stColumn"] {{
+          flex:1 1 100% !important; min-width:100% !important;
+        }}
+        .st-key-stock_apply_row [data-testid="stHorizontalBlock"] {{ flex-wrap:wrap; }}
+        .st-key-stock_apply_row [data-testid="stColumn"] {{
+          flex:1 1 100% !important; min-width:100% !important;
+        }}
+      }}
     </style>
     """,
     unsafe_allow_html=True,
 )
 
-head_col, theme_col = st.columns([5, 1])
-with head_col:
-    st.markdown(
-        f"""
-        <div style="display:flex; align-items:baseline; gap:12px;
-                    padding-bottom:12px; margin-bottom:8px;">
-          <span style="color:{ACCENT}; font-size:22px;">台股投資雷達</span>
-          <span style="color:{TEXT_MUTED}; font-size:13px;">tw-invest-copilot · v1</span>
-          <span style="color:{TEXT_MUTED}; font-size:13px;">
-            · last update: {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}</span>
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
-with theme_col:
-    st.segmented_control(
-        "主題", options=["暗色", "亮色"], default="暗色",
-        key="theme_choice", label_visibility="collapsed",
-    )
+st.markdown(
+    f"""
+    <div class="dashboard-head" style="padding-bottom:11px; margin-bottom:7px;">
+      <span class="dashboard-title">台股投資雷達</span>
+      <span class="dashboard-meta">tw-invest-copilot · v1</span>
+      <span class="dashboard-meta">· 更新 {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}</span>
+    </div>
+    """,
+    unsafe_allow_html=True,
+)
 st.markdown(
     f"<div style='border-bottom:1px solid {GRID}; margin-bottom:20px;'></div>",
     unsafe_allow_html=True,
@@ -421,7 +499,7 @@ def render_pe_river(result: dict):
             y=df["Close"],
             name="收盤價",
             mode="lines",
-            line=dict(color="#f2f0e9", width=2),
+            line=dict(color="#243b53", width=2),
             hovertemplate="收盤價 %{y:,.2f}<extra></extra>",
         )
     )
@@ -738,7 +816,8 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
-alert_cols = st.columns(4)
+alert_grid = st.container(key="alert_grid")
+alert_cols = alert_grid.columns(4)
 
 # 台指夜盤：獨立處理——走勢圖是「最近一次整個交易時段」的逐分鐘折線，
 # 不是逐日收盤價；標題數值/漲跌%用 TAIFEX 每日行情表的官方收盤數字（跟逐分鐘資料最後一筆
@@ -886,21 +965,15 @@ def render_ai_analysis(symbol, name, df, latest, signal, ma_signals, price, chan
     result = st.session_state.get(state_key)
     total_spend = load_total_spend()
 
-    head_col, cost_col = st.columns([3, 1])
-    with head_col:
-        st.markdown(
-            f"<div style='color:{ACCENT}; font-size:15px; font-weight:600;'>🤖 AI 綜合分析</div>"
-            f"<div style='color:{TEXT_MUTED}; font-size:11px;'>Opus 仔細研讀技術／基本／籌碼三面向後給操作建議（按鈕才產生，每檔保留上次結果）</div>",
-            unsafe_allow_html=True,
-        )
-    with cost_col:
-        frac = min(total_spend / BUDGET_USD, 1.0) if BUDGET_USD else 0.0
-        st.markdown(
-            f"<div style='text-align:right; color:{TEXT_MUTED}; font-size:11px;'>AI 花費</div>"
-            f"<div style='text-align:right; font-size:12px;'>${total_spend:.3f} / ${BUDGET_USD:.0f}</div>",
-            unsafe_allow_html=True,
-        )
-        st.progress(frac)
+    st.markdown(
+        f"<div class='ai-summary-head'>"
+        f"<div><div style='color:{ACCENT}; font-size:16px; font-weight:700;'>🤖 AI 決策摘要</div>"
+        f"<div style='color:{TEXT_MUTED}; font-size:11px;'>"
+        "先看結論與操作條件；技術／基本／籌碼原始圖表可在下方展開</div></div>"
+        f"<span class='ai-cost-pill'>AI 額度 ${total_spend:.3f} / ${BUDGET_USD:.0f}</span>"
+        f"</div>",
+        unsafe_allow_html=True,
+    )
 
     if _ai_required_pw and not ai_unlocked:
         pw = st.text_input(
@@ -1022,7 +1095,7 @@ def render_ai_analysis(symbol, name, df, latest, signal, ma_signals, price, chan
 
 
 # 標的篩選緊接在警示指標之後，讓「市場警示 → 選擇標的 → K 線」形成連續閱讀順序。
-with st.container(border=True):
+with st.container(border=True, key="stock_filters"):
     st.markdown(
         f"<div style='color:{ACCENT}; font-size:14px; margin-bottom:4px;'>標的檢視</div>",
         unsafe_allow_html=True,
@@ -1044,8 +1117,8 @@ with st.container(border=True):
     st.caption(f"目前顯示 {len(filtered_watchlist)} 個標的")
 
 
-# MA 線刻意避開紅/綠（留給K線漲跌用），深色底上要夠亮才看得清楚
-MA_COLORS = {5: "#5b9bd5", 10: "#a89ef0", 20: "#f0b429", 60: "#c4c1b8"}
+# MA 線刻意避開紅／綠（留給 K 線漲跌用），亮色底上維持足夠對比。
+MA_COLORS = {5: "#3478a8", 10: "#7666b8", 20: "#d08a00", 60: "#6b7280"}
 
 # 「今日」沒有放進來：我們的歷史資料是日線（一天一根K棒），沒有分鐘級盤中資料，
 # 「今日」放進日K圖只會看到1根棒子沒有意義。之後若要做盤中圖是另一個功能。
@@ -1092,7 +1165,8 @@ list_event = st.dataframe(
 )
 selected_rows = list_event.selection["rows"] if list_event and list_event.selection else []
 pending_symbols = selected_symbols_from_rows(candidate_ticker_data, selected_rows)
-apply_col, status_col = st.columns([1, 3])
+apply_row = st.container(key="stock_apply_row")
+apply_col, status_col = apply_row.columns([1, 3])
 with apply_col:
     apply_selection = st.button(
         f"顯示勾選標的（{len(pending_symbols)}）",
@@ -1113,16 +1187,8 @@ with status_col:
     )
 
 
-def _face_header(title):
-    st.markdown(
-        f"<div style='color:{ACCENT}; font-size:15px; font-weight:600; "
-        f"border-bottom:1px solid {GRID}; padding-bottom:5px; margin:16px 0 8px;'>{title}</div>",
-        unsafe_allow_html=True,
-    )
-
-
 def render_stock_detail(sel):
-    """依序展開一檔股票的 AI 分析與技術／基本／籌碼三面向。"""
+    """手機優先：AI 摘要常駐，技術／基本／籌碼細節需要時再展開。"""
     symbol, name, category, df = sel["symbol"], sel["name"], sel["category"], sel["df"]
     price, signal, ma_signals = sel["price"], sel["signal"], sel["ma_signals"]
     latest = df.iloc[-1]
@@ -1134,31 +1200,34 @@ def render_stock_detail(sel):
 
     with st.container(border=True):
         st.markdown(
-            f"<span style='color:{TEXT_LIGHT}; font-size:17px;'>{name}</span> "
-            f"<span style='color:{TEXT_MUTED}; font-size:13px;'>{symbol}</span> "
-            f"<span style='color:{ACCENT}; font-size:11px; border:1px solid {ACCENT}66; "
-            f"border-radius:10px; padding:1px 7px;'>{category}</span>"
-            f"<span style='font-size:30px; font-weight:500; margin-left:14px;'>{price:,.2f}</span> "
-            f"<span style='color:{change_color}; font-size:16px;'>{arrow} {abs(change_pct):.2f}%</span>",
+            f"<div class='stock-header'>"
+            f"<span class='stock-name'>{name}</span>"
+            f"<span class='stock-symbol'>{symbol}</span>"
+            f"<span class='stock-category'>{category}</span>"
+            f"<span class='stock-price'>{price:,.2f}</span>"
+            f"<span style='color:{change_color}; font-size:16px;'>{arrow} {abs(change_pct):.2f}%</span>"
+            f"</div>",
             unsafe_allow_html=True,
         )
 
-        render_ai_analysis(symbol, name, df, latest, signal, ma_signals, price, change_pct)
+        safe_symbol = symbol.replace("^", "index_").replace(".", "_")
+        with st.container(key=f"ai_summary_{safe_symbol}"):
+            render_ai_analysis(symbol, name, df, latest, signal, ma_signals, price, change_pct)
 
-        _face_header("技術面")
-        render_technical_tab(symbol, df, display_df, latest, signal, ma_signals)
+        with st.expander("📈 技術面｜K 線、均線與布林通道", key=f"technical_{safe_symbol}"):
+            render_technical_tab(symbol, df, display_df, latest, signal, ma_signals)
 
-        _face_header("基本面")
-        if is_company_fundamentals_applicable(symbol):
-            render_fundamentals_tab(symbol)
-        else:
-            st.caption("個股基本面與估值圖僅適用一般公司；指數與 ETF 不套用月營收／EPS／PE 模型。")
+        with st.expander("🧾 基本面｜營收、EPS 與本益比", key=f"fundamentals_{safe_symbol}"):
+            if is_company_fundamentals_applicable(symbol):
+                render_fundamentals_tab(symbol)
+            else:
+                st.caption("個股基本面與估值圖僅適用一般公司；指數與 ETF 不套用月營收／EPS／PE 模型。")
 
-        _face_header("籌碼面")
-        if is_institutional_applicable(symbol):
-            render_chips_tab(symbol)
-        else:
-            st.caption("指數沒有個股籌碼；三大法人／融資融券／外資持股為個股與 ETF 適用。")
+        with st.expander("🏦 籌碼面｜法人、融資融券與外資持股", key=f"chips_{safe_symbol}"):
+            if is_institutional_applicable(symbol):
+                render_chips_tab(symbol)
+            else:
+                st.caption("指數沒有個股籌碼；三大法人／融資融券／外資持股為個股與 ETF 適用。")
 
 
 # ── 已送出標的的詳情 ───────────────────────────────────────────────

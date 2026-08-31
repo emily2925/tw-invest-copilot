@@ -248,7 +248,8 @@ def render_ai_industry_map(
         font=dict(family="monospace", color=text_light),
     )
 
-    map_col, diagram_col = st.columns([1.55, 1])
+    visual_grid = st.container(key="industry_map_visuals")
+    map_col, diagram_col = visual_grid.columns([1.55, 1])
     with map_col:
         st.plotly_chart(fig, width="stretch", config={"displayModeBar": False})
     with diagram_col:
