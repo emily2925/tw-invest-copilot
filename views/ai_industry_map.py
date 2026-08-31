@@ -13,9 +13,9 @@ import streamlit as st
 # 雛形先依使用者 2026-08-26 截圖中「當日漲幅最高的兩檔」選代表股。
 SECTORS = [
     {
-        "name": "光通訊／AI伺服器",
-        "short": "光通訊／伺服器",
-        "role": "傳資料、組裝整座 AI 機櫃",
+        "name": "光通",
+        "short": "光通",
+        "role": "用光纖與光模組高速傳輸資料",
         "leaders": [
             {"symbol": "3081.TWO", "name": "聯亞"},
             {"symbol": "6669.TW", "name": "緯穎"},
@@ -40,8 +40,8 @@ SECTORS = [
         ],
     },
     {
-        "name": "散熱／廠務",
-        "short": "散熱／廠務",
+        "name": "散熱",
+        "short": "散熱",
         "role": "用冷板、水管與機房工程把熱帶走",
         "leaders": [
             {"symbol": "3653.TW", "name": "健策"},
